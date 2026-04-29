@@ -16,6 +16,7 @@ from config import (
     HS_AZIMUTH, HS_ALTITUDE, HS_VERT_EXAG, HS_ALPHA,
     FONT_FAMILY, FONT,
     SIMPLIFY_TOLERANCE_DEG,
+    SHOW_GRID,
     DEM_PATH, OSM_PATH,
     WALL_WIDTH_FEET,
     PREVIEW_WIDTH,
@@ -212,7 +213,8 @@ def render_border(ax) -> None:
         facecolor='none', transform=ax.transData, zorder=20,
     )
     ax.add_patch(outer)
-    for lon in np.arange(np.ceil(BOUNDS['west']), BOUNDS['east'] + 0.5, 0.5):
-        ax.axvline(lon, color=PALETTE['grid'], linewidth=0.3 * PRINT_SCALE, zorder=0, alpha=0.5)
-    for lat in np.arange(np.ceil(BOUNDS['south']), BOUNDS['north'] + 0.5, 0.5):
-        ax.axhline(lat, color=PALETTE['grid'], linewidth=0.3 * PRINT_SCALE, zorder=0, alpha=0.5)
+    if SHOW_GRID:
+        for lon in np.arange(np.ceil(BOUNDS['west']), BOUNDS['east'] + 0.5, 0.5):
+            ax.axvline(lon, color=PALETTE['grid'], linewidth=0.3 * PRINT_SCALE, zorder=0, alpha=0.5)
+        for lat in np.arange(np.ceil(BOUNDS['south']), BOUNDS['north'] + 0.5, 0.5):
+            ax.axhline(lat, color=PALETTE['grid'], linewidth=0.3 * PRINT_SCALE, zorder=0, alpha=0.5)

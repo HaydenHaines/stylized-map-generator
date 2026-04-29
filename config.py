@@ -19,10 +19,10 @@ import numpy as np
 # match ~9:8 aspect on the print.
 
 BOUNDS = {
-    'west':  -98.45,
-    'east':  -95.10,
-    'south':  34.60,
-    'north':  37.00,
+    'west':  -97.90,   # ~25 mi west of OKC
+    'east':  -95.55,   # ~25 mi east of Tulsa
+    'south':  35.10,
+    'north':  36.55,
 }
 
 # Latitude used for aspect-ratio + hillshade cell-size corrections
@@ -166,20 +166,14 @@ MAP_TITLE    = "COMMERCIAL ROUTES OF OKLAHOMA"
 MAP_SUBTITLE = "Showing Principal Roads, Rails, Rivers, and Trade Corridors"
 SHOW_TITLE   = False    # set False to suppress the title block
 SHOW_LEGEND  = True     # set False to suppress the legend
+SHOW_GRID    = False    # lat/lon tick grid (subtle 0.5° lines)
 
 # ─── SLICE PREVIEW ───────────────────────────────────────────────────────────
 # When set (not None), renders only this sub-region at full print specs as a
 # vector PDF.  Use this to verify hair-thin line widths without paying the
 # render cost of the full 9 × 8 ft figure.
 # Set to None to render the full BOUNDS.
-SLICE_BOUNDS = {
-    # Lincoln County, Oklahoma — Chandler / Stroud / Prague area.
-    # ~30 × 31 miles geographic; renders to ~21 × 19 in at full print scale.
-    'west':  -97.06,
-    'east':  -96.42,
-    'south':  35.40,
-    'north':  35.85,
-}
+SLICE_BOUNDS = None   # full bounds render
 
 # ─── PATHS ───────────────────────────────────────────────────────────────────
 DATA_DIR   = 'data'
