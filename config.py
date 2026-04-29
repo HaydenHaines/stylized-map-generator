@@ -124,6 +124,18 @@ LW_PRINT = {
 # Set to 0 to disable.
 SIMPLIFY_TOLERANCE_DEG = 5e-5
 
+# ─── WATER BODY FILTER ────────────────────────────────────────────────────────
+# Minimum polygon area (m²) kept at download time.
+# 10 000 m² ≈ 1 ha — drops stock ponds, pools, drainage ditches.
+# Set to 0 to disable.
+MIN_WATER_BODY_AREA_M2 = 10_000
+
+# ─── CMYK EXPORT ─────────────────────────────────────────────────────────────
+# Absolute path to your print shop's ICC profile.
+# Set to None to skip CMYK conversion (default).
+# Common choices: U.S. Web Coated SWOP v2, GRACoL 2006, FOGRA39.
+CMYK_ICC_PROFILE: 'str | None' = None
+
 # ─── HILLSHADE ───────────────────────────────────────────────────────────────
 HS_AZIMUTH   = 320    # degrees — NW light source (classic cartographic convention)
 HS_ALTITUDE  = 40     # degrees above horizon

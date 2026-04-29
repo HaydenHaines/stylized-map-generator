@@ -34,7 +34,7 @@ import py3dep
 import osmnx as ox
 import geopandas as gpd
 import pyogrio        # replaces fiona for reading/writing GeoPackage
-from config import BOUNDS, DEM_PATH, OSM_PATH, DATA_DIR, DEM_RESOLUTION_M
+from config import BOUNDS, DEM_PATH, OSM_PATH, DATA_DIR, DEM_RESOLUTION_M, MIN_WATER_BODY_AREA_M2
 
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs('output', exist_ok=True)
@@ -123,6 +123,11 @@ try:
         tags={'natural': 'water'},
     )
     wb = wb[wb.geometry.geom_type.isin(['Polygon', 'MultiPolygon'])].copy()
+    if MIN_WATER_BODY_AREA_M2 > 0 and len(wb) > 0:
+        before = len(wb)
+        wb = wb[wb.to_crs(epsg=5070).geometry.area >= MIN_WATER_BODY_AREA_M2].copy()
+        print(f"     · area filter: {before:,} → {len(wb):,} polygons "
+              f"(kept ≥ {MIN_WATER_BODY_AREA_M2/1e4:.0f} ha)")
     if len(wb) > 0:
         keep_cols = [c for c in ['geometry', 'water', 'name'] if c in wb.columns]
         wb[keep_cols].to_file(OSM_PATH, layer='water_bodies', engine='pyogrio', driver='GPKG', mode='a')
