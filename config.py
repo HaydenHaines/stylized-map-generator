@@ -104,17 +104,25 @@ LW = {
 # Render script converts to absolute points: pt = px × 72 / PRINT_DPI.
 # At 900 DPI: 1 px ≈ 0.08 pt ≈ 0.028 mm.
 LW_PRINT = {
-    'contour':        8,    # regular topo contour
-    'index_contour':  16,   # index (every 5th) — labelled
+    'contour':        1,    # regular topo contour — hair-thin secondary detail
+    'index_contour':  2,    # index (every 5th)   — hair-thin secondary detail
     'river_major':    16,   # rivers / canals
     'river_minor':    4,    # streams / creeks
     'highway':        24,   # interstate & US highways
     'major_road':     16,   # state highways / primary roads
-    'minor_road':     8,    # county / residential roads
+    'minor_road':     6,    # county / residential roads
     'railroad':       16,   # rail lines
     'border':         96,   # map neatline
     'border_inner':   16,
 }
+
+# ─── GEOMETRY SIMPLIFICATION ───────────────────────────────────────────────────
+# Apply Douglas-Peucker simplification to OSM line/polygon geometries before
+# plotting.  Tolerance in decimal degrees; sub-pixel values produce no visible
+# change at print scale but cut path counts substantially.
+#   At 900 DPI on this map: 1° lon ≈ 28 000 px → tolerance 5e-5° ≈ 1.4 px.
+# Set to 0 to disable.
+SIMPLIFY_TOLERANCE_DEG = 5e-5
 
 # ─── HILLSHADE ───────────────────────────────────────────────────────────────
 HS_AZIMUTH   = 320    # degrees — NW light source (classic cartographic convention)

@@ -15,7 +15,9 @@ Usage:
 
 import os
 import sys
+import time
 import numpy as np
+from concurrent.futures import ThreadPoolExecutor
 from scipy.ndimage import gaussian_filter
 
 import matplotlib
@@ -37,7 +39,7 @@ from config import (
     HS_AZIMUTH, HS_ALTITUDE, HS_VERT_EXAG, HS_ALPHA,
     FONT_FAMILY, FONT,
     MAP_TITLE, MAP_SUBTITLE, SHOW_TITLE, SHOW_LEGEND,
-    SLICE_BOUNDS,
+    SLICE_BOUNDS, SIMPLIFY_TOLERANCE_DEG,
     DEM_PATH, OSM_PATH, DATA_DIR, OUTPUT_DIR,
 )
 
@@ -148,18 +150,42 @@ if not os.path.exists(DEM_PATH):
     print("  Run python 01_download_data.py first.")
     sys.exit(1)
 
-with rasterio.open(DEM_PATH) as src:
-    dem   = src.read(1).astype(np.float32)
-    bnd   = src.bounds
-    xform = src.transform
-    nodata = src.nodata
+import rioxarray  # noqa: E402
+
+# DEM is downloaded in EPSG:5070 (NAD83 / Conus Albers, meters). Our axes are
+# in EPSG:4326 (lat/lon degrees). Reproject so contour coordinates align with
+# the axes — without this, every contour segment lands outside the visible
+# axes box and is clipped to nothing.
+dem_ds = rioxarray.open_rasterio(DEM_PATH).squeeze()
+if str(dem_ds.rio.crs).upper() != 'EPSG:4326':
+    dem_ds = dem_ds.rio.reproject('EPSG:4326')
+
+# Clip to slice bounds in slice mode — keeps contour computation cheap and
+# avoids the matplotlib path-clipping issue we hit with full-DEM contours.
+if SLICE_MODE:
+    dem_ds = dem_ds.rio.clip_box(
+        minx=BOUNDS_USE['west'], miny=BOUNDS_USE['south'],
+        maxx=BOUNDS_USE['east'], maxy=BOUNDS_USE['north'],
+    )
+
+dem    = dem_ds.values.astype(np.float32)
+xform  = dem_ds.rio.transform()
+nodata = dem_ds.rio.nodata
+# Bounds in degrees
+class _Bnd:
+    pass
+bnd = _Bnd()
+bnd.left   = float(dem_ds.x.values.min())
+bnd.right  = float(dem_ds.x.values.max())
+bnd.top    = float(dem_ds.y.values.max())
+bnd.bottom = float(dem_ds.y.values.min())
 
 # Mask nodata
 if nodata is not None:
     dem[dem == nodata] = np.nan
 dem[dem < -500] = np.nan   # catch stray fill values
 
-print(f"     DEM shape : {dem.shape[1]} × {dem.shape[0]} px")
+print(f"     DEM shape : {dem.shape[1]} × {dem.shape[0]} px (EPSG:4326)")
 print(f"     Elevation : {np.nanmin(dem):.0f} – {np.nanmax(dem):.0f} m")
 
 # Smooth for contouring (reduces pixel-grid staircasing in contour lines)
@@ -222,7 +248,7 @@ ax.contour(
     colors=[PALETTE['contour']],
     linewidths=lw('contour'),
     zorder=2,
-    alpha=0.75,
+    alpha=0.5,
 )
 
 # Index contours (thicker, labelled)
@@ -264,19 +290,42 @@ else:
         available = []
     print(f"     Available layers: {available}")
 
+    # Parallel data prep: read each layer + apply Douglas-Peucker simplification
+    # in worker threads. pyogrio reads and shapely simplify both release the GIL,
+    # so threads scale across cores. Plotting must remain serial (matplotlib is
+    # not thread-safe).
+    LAYER_NAMES = ['water_bodies', 'waterways', 'roads', 'railways', 'places']
+
+    def _load_and_simplify(name):
+        if name not in available:
+            return None
+        gdf = gpd.read_file(OSM_PATH, layer=name, engine='pyogrio', bbox=READ_BBOX)
+        if SIMPLIFY_TOLERANCE_DEG > 0 and len(gdf):
+            # Skip simplification on Point geometries (no-op but wastes cycles)
+            if not (gdf.geometry.geom_type == 'Point').all():
+                gdf.geometry = gdf.geometry.simplify(
+                    SIMPLIFY_TOLERANCE_DEG, preserve_topology=True,
+                )
+        return gdf
+
+    t_load = time.time()
+    with ThreadPoolExecutor(max_workers=len(LAYER_NAMES)) as _ex:
+        layers = dict(zip(LAYER_NAMES, _ex.map(_load_and_simplify, LAYER_NAMES)))
+    print(f"     ✓  Loaded + simplified all layers in {time.time()-t_load:.1f}s")
+
     # ── Water bodies (polygons — rendered behind waterways) ──────────────────
-    if 'water_bodies' in available:
-        wb = gpd.read_file(OSM_PATH, layer='water_bodies', engine='pyogrio', bbox=READ_BBOX)
+    wb = layers['water_bodies']
+    if wb is not None:
         wb.plot(ax=ax,
                 color=PALETTE['water_fill'],
                 edgecolor=PALETTE['water_line'],
                 linewidth=lw('river_minor'),
-                zorder=4, alpha=0.95)
+                zorder=3, alpha=0.95)
         print(f"     ✓  Water bodies: {len(wb)}")
 
     # ── Waterways (lines) ────────────────────────────────────────────────────
-    if 'waterways' in available:
-        ww = gpd.read_file(OSM_PATH, layer='waterways', engine='pyogrio', bbox=READ_BBOX)
+    ww = layers['waterways']
+    if ww is not None:
         is_river = ww.get('waterway', '').isin(['river', 'canal']) if 'waterway' in ww.columns \
                    else ww.index.isin([])
 
@@ -285,81 +334,70 @@ else:
 
         if len(major_ww):
             major_ww.plot(ax=ax, color=PALETTE['water_line'],
-                          linewidth=lw('river_major'), zorder=5)
+                          linewidth=lw('river_major'), zorder=4)
         if len(minor_ww):
             minor_ww.plot(ax=ax, color=PALETTE['water_line'],
-                          linewidth=lw('river_minor'), zorder=5, alpha=0.7)
+                          linewidth=lw('river_minor'), zorder=4, alpha=0.7)
         print(f"     ✓  Waterways: {len(ww)} ({len(major_ww)} major)")
 
     # ── Roads ─────────────────────────────────────────────────────────────────
-    if 'roads' in available:
-        roads = gpd.read_file(OSM_PATH, layer='roads', engine='pyogrio', bbox=READ_BBOX)
-
+    roads = layers['roads']
+    if roads is not None:
+        # Stacking order, bottom → top:
+        #   topo (1-2) → water_bodies (3) → waterways (4) → minor (5)
+        #   → major (6) → railway (7) → highway (8) → labels (11)
         road_hierarchy = [
-            # (highway tag substring,    linewidth key,   color key)
-            ('motorway',                 'highway',       'highway'),
-            ('trunk',                    'highway',       'highway'),
-            ('primary',                  'major_road',    'major_road'),
-            ('secondary',                'major_road',    'major_road'),
-            ('tertiary',                 'minor_road',    'minor_road'),
-            ('residential',              'minor_road',    'minor_road'),
-            ('unclassified',             'minor_road',    'minor_road'),
+            # (highway tag,    lw key,        color key,       zorder)
+            ('motorway',       'highway',     'highway',       8),
+            ('trunk',          'highway',     'highway',       8),
+            ('primary',        'major_road',  'major_road',    6),
+            ('secondary',      'major_road',  'major_road',    6),
+            ('tertiary',       'minor_road',  'minor_road',    5),
+            ('residential',    'minor_road',  'minor_road',    5),
+            ('unclassified',   'minor_road',  'minor_road',    5),
         ]
 
         if 'highway' in roads.columns:
-            for htype, lw_key, color_key in road_hierarchy:
+            for htype, lw_key, color_key, zord in road_hierarchy:
                 mask = roads['highway'].astype(str).str.lower() == htype
                 subset = roads[mask]
                 if len(subset):
                     subset.plot(ax=ax,
                                 color=PALETTE[color_key],
                                 linewidth=lw(lw_key),
-                                zorder=6)
+                                zorder=zord)
         else:
             roads.plot(ax=ax, color=PALETTE['minor_road'],
-                       linewidth=lw('minor_road'), zorder=6)
+                       linewidth=lw('minor_road'), zorder=5)
 
         print(f"     ✓  Roads: {len(roads)}")
 
     # ── Railways ──────────────────────────────────────────────────────────────
-    if 'railways' in available:
-        rail = gpd.read_file(OSM_PATH, layer='railways', engine='pyogrio', bbox=READ_BBOX)
-        # Thin black dashed line — classic rail symbol
+    rail = layers['railways']
+    if rail is not None:
+        # Thin dashed line — classic rail symbol
         rail.plot(ax=ax, color=PALETTE['railroad'],
                   linewidth=lw('railroad') * 0.7, zorder=7,
                   linestyle=(0, (5, 4)))
         print(f"     ✓  Railways: {len(rail)}")
 
     # ── Places ────────────────────────────────────────────────────────────────
-    if 'places' in available:
-        places = gpd.read_file(OSM_PATH, layer='places', engine='pyogrio', bbox=READ_BBOX)
-
-        # Scatter marker size is in points² — scale with figure
+    places = layers['places']
+    if places is not None:
         place_config = {
-            'city':    ('o', (7  * SCALE) ** 2, FONT['city']),
-            'town':    ('o', (4  * SCALE) ** 2, FONT['town']),
-            'village': ('o', (2.5 * SCALE) ** 2, FONT['village']),
-            'hamlet':  ('.', (1.5 * SCALE) ** 2, FONT['hamlet']),
+            'city':    FONT['city'],
+            'town':    FONT['town'],
+            'village': FONT['village'],
+            'hamlet':  FONT['hamlet'],
         }
 
         if 'place' not in places.columns:
             places['place'] = 'town'
 
-        for ptype, (marker, msize, fspec) in place_config.items():
+        for ptype, fspec in place_config.items():
             subset = places[places['place'] == ptype]
             if len(subset) == 0:
                 continue
-
-            # Dot
-            ax.scatter(
-                subset.geometry.x,
-                subset.geometry.y,
-                s=msize,
-                color=PALETTE['town_dot'],
-                zorder=10,
-                marker=marker,
-                linewidths=0,
-            )
 
             # Label
             if 'name' in subset.columns:
@@ -374,18 +412,15 @@ else:
                     ax.annotate(
                         name,
                         xy=(row.geometry.x, row.geometry.y),
-                        xytext=(4, 4),
+                        xytext=(0, 2 * SCALE),
                         textcoords='offset points',
+                        ha='center', va='bottom',
                         fontsize=fs(ptype if ptype in FONT else 'town'),
                         fontfamily=FONT_FAMILY,
                         fontweight=fspec['weight'],
                         fontstyle=fspec.get('style', 'normal'),
                         color=PALETTE['town_label'],
                         zorder=11,
-                        path_effects=[
-                            pe.withStroke(linewidth=max(1.5, 2.5 * SCALE),
-                                          foreground=PALETTE['label_halo'])
-                        ],
                     )
 
         print(f"     ✓  Places: {len(places)}")
