@@ -30,11 +30,33 @@ if missing:
     print("Fix:   pip install -r requirements.txt")
     sys.exit(1)
 
+import argparse
 import py3dep
 import osmnx as ox
 import geopandas as gpd
 import pyogrio        # replaces fiona for reading/writing GeoPackage
 from config import BOUNDS, DEM_PATH, OSM_PATH, DATA_DIR, DEM_RESOLUTION_M, MIN_WATER_BODY_AREA_M2
+
+# ── CLI overrides (all default to config.py values) ──────────────────────────
+_ap = argparse.ArgumentParser(description='Download DEM + OSM data for stylized-map-generator')
+_ap.add_argument('--bounds', metavar='W,S,E,N',
+                 help='Bounding box as west,south,east,north decimal degrees '
+                      '(overrides config.BOUNDS)')
+_ap.add_argument('--resolution', type=int,
+                 help='DEM resolution in metres (overrides config.DEM_RESOLUTION_M)')
+_ap.add_argument('--output-dir', metavar='DIR',
+                 help='Directory for downloaded data (overrides config.DATA_DIR)')
+_cli = _ap.parse_args()
+
+if _cli.bounds:
+    _w, _s, _e, _n = map(float, _cli.bounds.split(','))
+    BOUNDS = {'west': _w, 'south': _s, 'east': _e, 'north': _n}
+if _cli.resolution:
+    DEM_RESOLUTION_M = _cli.resolution
+if _cli.output_dir:
+    DATA_DIR = _cli.output_dir
+    DEM_PATH = f'{DATA_DIR}/dem.tif'
+    OSM_PATH = f'{DATA_DIR}/osm_data.gpkg'
 
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs('output', exist_ok=True)

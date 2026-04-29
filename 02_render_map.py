@@ -71,6 +71,52 @@ from config import (
     DEM_PATH, OSM_PATH, DATA_DIR, OUTPUT_DIR,
 )
 
+import argparse as _argparse
+
+# ── CLI overrides (all default to config.py values) ──────────────────────────
+_ap = _argparse.ArgumentParser(description='Render stylized map PDF')
+_ap.add_argument('--bounds', metavar='W,S,E,N',
+                 help='Override config.BOUNDS (west,south,east,north)')
+_ap.add_argument('--slice', metavar='W,S,E,N',
+                 help='Override config.SLICE_BOUNDS (west,south,east,north)')
+_ap.add_argument('--wall-w', type=float, metavar='FEET',
+                 help='Wall width in feet (overrides config.WALL_WIDTH_FEET)')
+_ap.add_argument('--wall-h', type=float, metavar='FEET',
+                 help='Wall height in feet (overrides config.WALL_HEIGHT_FEET)')
+_ap.add_argument('--dpi', type=int,
+                 help='Override PRINT_DPI')
+_ap.add_argument('--simplify', type=float, metavar='DEG',
+                 help='Douglas-Peucker tolerance in degrees (overrides config)')
+_ap.add_argument('--output-dir', metavar='DIR',
+                 help='Output directory (overrides config.OUTPUT_DIR)')
+_mode = _ap.add_mutually_exclusive_group()
+_mode.add_argument('--preview', action='store_true', default=False,
+                   help='Force preview mode (PREVIEW=True)')
+_mode.add_argument('--print', dest='full_print', action='store_true', default=False,
+                   help='Force full print mode (PREVIEW=False)')
+_cli = _ap.parse_args()
+
+if _cli.bounds:
+    _w, _s, _e, _n = map(float, _cli.bounds.split(','))
+    BOUNDS = {'west': _w, 'south': _s, 'east': _e, 'north': _n}
+if _cli.slice:
+    _w, _s, _e, _n = map(float, _cli.slice.split(','))
+    SLICE_BOUNDS = {'west': _w, 'south': _s, 'east': _e, 'north': _n}
+if _cli.wall_w:
+    WALL_WIDTH_FEET = _cli.wall_w
+if _cli.wall_h:
+    WALL_HEIGHT_FEET = _cli.wall_h
+if _cli.dpi:
+    PRINT_DPI = _cli.dpi
+if _cli.simplify is not None:
+    SIMPLIFY_TOLERANCE_DEG = _cli.simplify
+if _cli.output_dir:
+    OUTPUT_DIR = _cli.output_dir
+if _cli.preview:
+    PREVIEW = True
+if _cli.full_print:
+    PREVIEW = False
+
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # ─── Utility ──────────────────────────────────────────────────────────────────
