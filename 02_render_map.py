@@ -74,7 +74,11 @@ from config import (
 import argparse as _argparse
 
 # ── CLI overrides (all default to config.py values) ──────────────────────────
-_ap = _argparse.ArgumentParser(description='Render stylized map PDF')
+_ap = _argparse.ArgumentParser(
+    description='Render stylized map PDF',
+    formatter_class=_argparse.ArgumentDefaultsHelpFormatter,
+    # Use --flag=value syntax for negative numbers: --bounds=-97.0,35.0,-96.0,36.0
+)
 _ap.add_argument('--bounds', metavar='W,S,E,N',
                  help='Override config.BOUNDS (west,south,east,north)')
 _ap.add_argument('--slice', metavar='W,S,E,N',

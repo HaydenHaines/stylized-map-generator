@@ -38,10 +38,15 @@ import pyogrio        # replaces fiona for reading/writing GeoPackage
 from config import BOUNDS, DEM_PATH, OSM_PATH, DATA_DIR, DEM_RESOLUTION_M, MIN_WATER_BODY_AREA_M2
 
 # ── CLI overrides (all default to config.py values) ──────────────────────────
-_ap = argparse.ArgumentParser(description='Download DEM + OSM data for stylized-map-generator')
+_ap = argparse.ArgumentParser(
+    description='Download DEM + OSM data for stylized-map-generator',
+    # Allow interspersed args so negative numbers aren't parsed as flags
+    formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+)
 _ap.add_argument('--bounds', metavar='W,S,E,N',
                  help='Bounding box as west,south,east,north decimal degrees '
-                      '(overrides config.BOUNDS)')
+                      '(overrides config.BOUNDS). Use = syntax with negatives: '
+                      '--bounds=-97.0,35.0,-96.0,36.0)')
 _ap.add_argument('--resolution', type=int,
                  help='DEM resolution in metres (overrides config.DEM_RESOLUTION_M)')
 _ap.add_argument('--output-dir', metavar='DIR',
