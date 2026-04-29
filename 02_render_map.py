@@ -557,6 +557,23 @@ tick(f"✓  PDF written in {time.time()-t_save:.1f}s")
 print(f"\n  ✓  {label} saved:  {out_pdf}")
 print(f"     Page size: {fig_w:.2f} × {fig_h:.2f} in (1:1 with print at this slice / scale)")
 
+# Auto-convert to CMYK if an ICC profile is configured (print mode only)
+from config import CMYK_ICC_PROFILE as _CMYK_ICC  # noqa: E402
+if not PREVIEW and _CMYK_ICC:
+    import subprocess as _sp
+    from pathlib import Path as _Path
+    cmyk_path = str(_Path(out_pdf).with_stem(_Path(out_pdf).stem + '_CMYK'))
+    tick("Converting to CMYK via Ghostscript …")
+    try:
+        _sp.run([
+            'gs', '-sDEVICE=pdfwrite', '-dNOPAUSE', '-dBATCH', '-dQUIET',
+            '-sColorConversionStrategy=CMYK', '-sProcessColorModel=DeviceCMYK',
+            f'-sOutputICCProfile={_CMYK_ICC}', f'-sOutputFile={cmyk_path}', out_pdf,
+        ], check=True)
+        tick(f"✓  CMYK PDF: {cmyk_path}")
+    except Exception as _e:
+        tick(f"⚠  CMYK conversion failed: {_e} — RGB PDF still valid")
+
 plt.close(fig)
 total = int(time.time() - _t_start)
 mm, ss = divmod(total, 60)

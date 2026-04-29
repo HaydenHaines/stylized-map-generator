@@ -66,14 +66,18 @@ The render script reads everything from `config.py`; you should rarely need to e
 
 ## Print prep
 
-Output is **RGB vector PDF** by default. If your print shop requires CMYK, convert with Ghostscript using their ICC profile:
+Output is **RGB vector PDF** by default.
+
+**CMYK conversion** (required by most print shops):
+
+1. Install Ghostscript: `sudo apt install ghostscript` / `brew install ghostscript`
+2. Run the standalone converter:
 
 ```bash
-gs -sDEVICE=pdfwrite -sColorConversionStrategy=CMYK \
-   -sProcessColorModel=DeviceCMYK \
-   -sOutputICCProfile=/path/to/printer-profile.icc \
-   -o map_CMYK.pdf map_PRINT.pdf
+python 03_to_cmyk.py --input output/map_PRINT.pdf --icc /path/to/profile.icc
 ```
+
+Or set `CMYK_ICC_PROFILE = '/path/to/profile.icc'` in `config.py` — CMYK conversion then runs automatically at the end of every print render.
 
 Ask your shop which ICC profile to target (common: U.S. Web Coated SWOP v2, GRACoL 2006, FOGRA39).
 
