@@ -128,7 +128,7 @@ cs_idx = ax.contour(
     Xg, Yg, dem_smooth, levels=idx_levels,
     colors=[PALETTE['index_contour']],
     linewidths=lw_pt('index_contour'),
-    zorder=3,
+    zorder=3, alpha=0.75,
 )
 print(f"     regular segments: {sum(len(s) for s in cs_reg.allsegs):,}")
 print(f"     index   segments: {sum(len(s) for s in cs_idx.allsegs):,}")

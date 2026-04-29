@@ -20,6 +20,15 @@ import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 from scipy.ndimage import gaussian_filter
 
+# Force line-buffered stdout so progress messages stream in real time even
+# when output is captured to a file (otherwise Python block-buffers and
+# nothing appears until process exit).
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+except AttributeError:
+    pass  # older Python
+
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -46,8 +55,25 @@ from config import (
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # ─── Utility ──────────────────────────────────────────────────────────────────
+_t_start = time.time()
+_t_phase = _t_start
+
 def step(msg):
-    print(f"\n  ▸  {msg}")
+    """Print a phase header with elapsed-since-start and time-since-prev-step."""
+    global _t_phase
+    now = time.time()
+    if _t_phase != _t_start:
+        print(f"     · prev phase took {now - _t_phase:.1f}s", flush=True)
+    elapsed = int(now - _t_start)
+    mm, ss = divmod(elapsed, 60)
+    _t_phase = now
+    print(f"\n  ▸  [{mm:02d}:{ss:02d}] {msg}", flush=True)
+
+def tick(msg):
+    """Inline progress message (no phase change). Use for sub-steps."""
+    elapsed = int(time.time() - _t_start)
+    mm, ss = divmod(elapsed, 60)
+    print(f"     [{mm:02d}:{ss:02d}] {msg}", flush=True)
 
 def m_to_ft(m):
     return m * 3.28084
@@ -258,6 +284,7 @@ cs_idx = ax.contour(
     colors=[PALETTE['index_contour']],
     linewidths=lw('index_contour'),
     zorder=3,
+    alpha=0.75,
 )
 
 # Labels (elevation in feet or metres, user-controlled)
@@ -316,12 +343,13 @@ else:
     # ── Water bodies (polygons — rendered behind waterways) ──────────────────
     wb = layers['water_bodies']
     if wb is not None:
+        tick(f"plotting {len(wb):,} water bodies …")
         wb.plot(ax=ax,
                 color=PALETTE['water_fill'],
                 edgecolor=PALETTE['water_line'],
                 linewidth=lw('river_minor'),
                 zorder=3, alpha=0.95)
-        print(f"     ✓  Water bodies: {len(wb)}")
+        tick(f"✓  water bodies done")
 
     # ── Waterways (lines) ────────────────────────────────────────────────────
     ww = layers['waterways']
@@ -332,6 +360,7 @@ else:
         major_ww = ww[is_river]
         minor_ww = ww[~is_river]
 
+        tick(f"plotting {len(major_ww):,} major + {len(minor_ww):,} minor waterways …")
         if len(major_ww):
             major_ww.plot(ax=ax, color=PALETTE['water_line'],
                           linewidth=lw('river_major'), zorder=4)
@@ -362,6 +391,7 @@ else:
                 mask = roads['highway'].astype(str).str.lower() == htype
                 subset = roads[mask]
                 if len(subset):
+                    tick(f"plotting {len(subset):,} {htype} roads …")
                     subset.plot(ax=ax,
                                 color=PALETTE[color_key],
                                 linewidth=lw(lw_key),
@@ -370,7 +400,7 @@ else:
             roads.plot(ax=ax, color=PALETTE['minor_road'],
                        linewidth=lw('minor_road'), zorder=5)
 
-        print(f"     ✓  Roads: {len(roads)}")
+        tick(f"✓  all {len(roads):,} roads plotted")
 
     # ── Railways ──────────────────────────────────────────────────────────────
     rail = layers['railways']
@@ -498,11 +528,17 @@ else:
     out_pdf = os.path.join(OUTPUT_DIR, 'map_PRINT.pdf')
     label = 'Print PDF'
 
+tick(f"writing PDF (this is the slow part — encoding ~all paths) …")
+t_save = time.time()
 fig.savefig(out_pdf, dpi=dpi, bbox_inches='tight',
             facecolor=PALETTE['paper'], format='pdf',
             metadata={'Creator': 'Stylized Map Generator'})
+tick(f"✓  PDF written in {time.time()-t_save:.1f}s")
+
 print(f"\n  ✓  {label} saved:  {out_pdf}")
-print(f"     Page size: {fig_w:.2f} × {fig_h:.2f} in (1:1 with print at this slice / scale)\n")
+print(f"     Page size: {fig_w:.2f} × {fig_h:.2f} in (1:1 with print at this slice / scale)")
 
 plt.close(fig)
-print("  Done.\n")
+total = int(time.time() - _t_start)
+mm, ss = divmod(total, 60)
+print(f"\n  Done.  Total wall: {mm:02d}:{ss:02d}\n")

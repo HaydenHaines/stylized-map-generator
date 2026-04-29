@@ -60,8 +60,8 @@ CONTOUR_LABEL_FMT  = 'ft'    # 'ft' shows elevation in feet; 'm' shows metres
 # Swap these to the warm vintage palette once you've approved the structure.
 PALETTE = {
     'paper':           '#F3ECDD',   # warm aged-paper background
-    'contour':         '#B8AEA1',   # lighter topo (regular contours)
-    'index_contour':   '#93897D',   # primary topo (index contours, labels)
+    'contour':         '#B8AEA1',   # regular contours
+    'index_contour':   '#B8AEA1',   # index contours — same color, differentiated by alpha + LW
     'hillshade_dark':  '#93897D',   # warm shadow tint (used only if HS_ALPHA > 0)
     'water_line':      '#8A9CAA',   # rivers
     'water_fill':      '#B8C5CE',   # softer river fill for lakes/reservoirs
