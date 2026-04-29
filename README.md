@@ -85,6 +85,31 @@ Ask your shop which ICC profile to target (common: U.S. Web Coated SWOP v2, GRAC
 
 `python test_render.py` runs the pipeline against a synthetic DEM, useful for validating the install without a network round-trip.
 
+## Performance & RAM
+
+| Mode | Typical wall time | Peak RSS |
+|------|-------------------|----------|
+| Slice preview (`PREVIEW=True`, `SLICE_BOUNDS` set) | 5–30 min (varies by area) | 2–10 GB |
+| Full bounds serial (`python 02_render_map.py --print`) | 8–15 h | 16–32 GB |
+| Full bounds parallel (`python render_full_parallel.py`) | ~time of heaviest layer | 4–8 GB per worker |
+
+**Minimum recommended RAM:**
+- Slice renders: 8 GB
+- Serial full render: 32 GB (16 GB minimum, OOM risk during PDF save)
+- Parallel full render: 16 GB (workers share no heap; limit `--workers` on smaller machines)
+
+**If RAM is limited or renders are slow:**
+- Increase `SIMPLIFY_TOLERANCE_DEG` (try `1e-4`) to reduce path counts
+- Increase `MIN_WATER_BODY_AREA_M2` (try `50_000` for 5 ha) to drop more small water bodies
+- Use slice mode for style iteration; only full-render when ready to send to the shop
+
+**Bottleneck:** `fig.savefig(format='pdf')` — matplotlib encodes every vector path sequentially. The parallel renderer (`render_full_parallel.py`) splits this across cores, bounding total time to roughly the slowest single layer (typically roads at ~635 k segments for a state-sized bbox). Phase timings are printed during the run to show exactly where time is spent.
+
+**Observed slice timing** (Lincoln County, ~30×31 mi, synthetic data):
+- OSM load + simplify: ~1.5 s (parallel ThreadPoolExecutor, 5 layers)
+- Contour generation: ~7 s
+- `savefig` PDF encoding: dominant cost; scales with total vector path count
+
 ## Data sources
 
 - Elevation: [USGS 3DEP](https://www.usgs.gov/3d-elevation-program) via [py3dep](https://github.com/hyriver/py3dep)
