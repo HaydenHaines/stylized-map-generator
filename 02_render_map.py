@@ -60,6 +60,59 @@ try:
 except AttributeError:
     pass  # older Python
 
+import argparse as _argparse
+import importlib.util as _imputil
+
+# ── Config loading (--config pre-parsed before any config values are read) ────
+def _load_config_module(path):
+    spec = _imputil.spec_from_file_location('_map_config', os.path.abspath(path))
+    mod = _imputil.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+_pre = _argparse.ArgumentParser(add_help=False)
+_pre.add_argument('--config', metavar='FILE')
+_pre_args, _ = _pre.parse_known_args()
+
+if _pre_args.config:
+    _cfg = _load_config_module(_pre_args.config)
+else:
+    import config as _cfg
+
+BOUNDS               = _cfg.BOUNDS
+LAT_CENTER           = _cfg.LAT_CENTER
+WALL_WIDTH_FEET      = _cfg.WALL_WIDTH_FEET
+WALL_HEIGHT_FEET     = _cfg.WALL_HEIGHT_FEET
+PREVIEW              = _cfg.PREVIEW
+PREVIEW_DPI          = _cfg.PREVIEW_DPI
+PREVIEW_WIDTH        = _cfg.PREVIEW_WIDTH
+PRINT_DPI            = _cfg.PRINT_DPI
+DEM_RESOLUTION_M     = _cfg.DEM_RESOLUTION_M
+CONTOUR_INTERVAL_M   = _cfg.CONTOUR_INTERVAL_M
+INDEX_EVERY          = _cfg.INDEX_EVERY
+CONTOUR_SMOOTH       = _cfg.CONTOUR_SMOOTH
+CONTOUR_LABEL_FMT    = _cfg.CONTOUR_LABEL_FMT
+PALETTE              = _cfg.PALETTE
+LW                   = _cfg.LW
+LW_PRINT             = _cfg.LW_PRINT
+HS_AZIMUTH           = _cfg.HS_AZIMUTH
+HS_ALTITUDE          = _cfg.HS_ALTITUDE
+HS_VERT_EXAG         = _cfg.HS_VERT_EXAG
+HS_ALPHA             = _cfg.HS_ALPHA
+FONT_FAMILY          = _cfg.FONT_FAMILY
+FONT                 = _cfg.FONT
+MAP_TITLE            = _cfg.MAP_TITLE
+MAP_SUBTITLE         = _cfg.MAP_SUBTITLE
+SHOW_TITLE           = _cfg.SHOW_TITLE
+SHOW_LEGEND          = _cfg.SHOW_LEGEND
+SHOW_GRID            = _cfg.SHOW_GRID
+SLICE_BOUNDS         = _cfg.SLICE_BOUNDS
+SIMPLIFY_TOLERANCE_DEG = _cfg.SIMPLIFY_TOLERANCE_DEG
+DEM_PATH             = _cfg.DEM_PATH
+OSM_PATH             = _cfg.OSM_PATH
+DATA_DIR             = _cfg.DATA_DIR
+OUTPUT_DIR           = _cfg.OUTPUT_DIR
+
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -69,28 +122,14 @@ from matplotlib.colors import LightSource, LinearSegmentedColormap
 from matplotlib.patches import FancyBboxPatch
 import rasterio
 
-from config import (
-    BOUNDS, LAT_CENTER,
-    WALL_WIDTH_FEET, WALL_HEIGHT_FEET,
-    PREVIEW, PREVIEW_DPI, PREVIEW_WIDTH, PRINT_DPI,
-    DEM_RESOLUTION_M,
-    CONTOUR_INTERVAL_M, INDEX_EVERY, CONTOUR_SMOOTH, CONTOUR_LABEL_FMT,
-    PALETTE, LW, LW_PRINT,
-    HS_AZIMUTH, HS_ALTITUDE, HS_VERT_EXAG, HS_ALPHA,
-    FONT_FAMILY, FONT,
-    MAP_TITLE, MAP_SUBTITLE, SHOW_TITLE, SHOW_LEGEND, SHOW_GRID,
-    SLICE_BOUNDS, SIMPLIFY_TOLERANCE_DEG,
-    DEM_PATH, OSM_PATH, DATA_DIR, OUTPUT_DIR,
-)
-
-import argparse as _argparse
-
 # ── CLI overrides (all default to config.py values) ──────────────────────────
 _ap = _argparse.ArgumentParser(
     description='Render stylized map PDF',
     formatter_class=_argparse.ArgumentDefaultsHelpFormatter,
     # Use --flag=value syntax for negative numbers: --bounds=-97.0,35.0,-96.0,36.0
 )
+_ap.add_argument('--config', metavar='FILE',
+                 help='Path to an alternate config.py (replaces the default config.py)')
 _ap.add_argument('--bounds', metavar='W,S,E,N',
                  help='Override config.BOUNDS (west,south,east,north)')
 _ap.add_argument('--slice', metavar='W,S,E,N',
@@ -115,6 +154,7 @@ _cli = _ap.parse_args()
 if _cli.bounds:
     _w, _s, _e, _n = map(float, _cli.bounds.split(','))
     BOUNDS = {'west': _w, 'south': _s, 'east': _e, 'north': _n}
+    LAT_CENTER = (BOUNDS['north'] + BOUNDS['south']) / 2
 if _cli.slice:
     _w, _s, _e, _n = map(float, _cli.slice.split(','))
     SLICE_BOUNDS = {'west': _w, 'south': _s, 'east': _e, 'north': _n}
@@ -633,7 +673,7 @@ print(f"\n  ✓  {label} saved:  {out_pdf}")
 print(f"     Page size: {fig_w:.2f} × {fig_h:.2f} in (1:1 with print at this slice / scale)")
 
 # Auto-convert to CMYK if an ICC profile is configured (print mode only)
-from config import CMYK_ICC_PROFILE as _CMYK_ICC  # noqa: E402
+_CMYK_ICC = getattr(_cfg, 'CMYK_ICC_PROFILE', None)
 if not PREVIEW and _CMYK_ICC:
     import subprocess as _sp
     from pathlib import Path as _Path

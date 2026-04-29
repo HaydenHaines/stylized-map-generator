@@ -31,11 +31,34 @@ if missing:
     sys.exit(1)
 
 import argparse
+import importlib.util as _imputil
 import py3dep
 import osmnx as ox
 import geopandas as gpd
 import pyogrio        # replaces fiona for reading/writing GeoPackage
-from config import BOUNDS, DEM_PATH, OSM_PATH, DATA_DIR, DEM_RESOLUTION_M, MIN_WATER_BODY_AREA_M2
+
+# ── Config loading (--config pre-parsed before any config values are read) ────
+def _load_config_module(path):
+    spec = _imputil.spec_from_file_location('_map_config', os.path.abspath(path))
+    mod = _imputil.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+_pre = argparse.ArgumentParser(add_help=False)
+_pre.add_argument('--config', metavar='FILE')
+_pre_args, _ = _pre.parse_known_args()
+
+if _pre_args.config:
+    _cfg = _load_config_module(_pre_args.config)
+else:
+    import config as _cfg
+
+BOUNDS              = _cfg.BOUNDS
+DEM_PATH            = _cfg.DEM_PATH
+OSM_PATH            = _cfg.OSM_PATH
+DATA_DIR            = _cfg.DATA_DIR
+DEM_RESOLUTION_M    = _cfg.DEM_RESOLUTION_M
+MIN_WATER_BODY_AREA_M2 = _cfg.MIN_WATER_BODY_AREA_M2
 
 # ── CLI overrides (all default to config.py values) ──────────────────────────
 _ap = argparse.ArgumentParser(
@@ -43,6 +66,8 @@ _ap = argparse.ArgumentParser(
     # Allow interspersed args so negative numbers aren't parsed as flags
     formatter_class=argparse.ArgumentDefaultsHelpFormatter,
 )
+_ap.add_argument('--config', metavar='FILE',
+                 help='Path to an alternate config.py (replaces the default config.py)')
 _ap.add_argument('--bounds', metavar='W,S,E,N',
                  help='Bounding box as west,south,east,north decimal degrees '
                       '(overrides config.BOUNDS). Use = syntax with negatives: '
