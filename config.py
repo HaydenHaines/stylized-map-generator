@@ -1,33 +1,36 @@
 """
-Oklahoma Topo Map — Configuration
-==================================
+Stylized Map Generator — Configuration
+=======================================
 All tuneable parameters live here.
 Tweak and re-run 02_render_map.py to see changes.
 No need to touch the render script itself for style changes.
+
+To map a different region: change BOUNDS, WALL_WIDTH_FEET / WALL_HEIGHT_FEET,
+and (optionally) SLICE_BOUNDS, then run 01_download_data.py followed by
+02_render_map.py.  Everything else is style and scales automatically.
 """
 
 import numpy as np
 
 # ─── GEOGRAPHIC BOUNDS ─────────────────────────────────────────────────────
-# Coverage: just east of Tulsa to just west of Oklahoma City
-# Sized to fill a 9 × 8 foot wall at the latitude correction for ~36 °N.
-# At 36 °N: 1° lon ≈ 90 km, 1° lat ≈ 111 km  →  ratio ≈ 0.81
-# Our Δlon=1.70° × 0.81 = 1.377 "lat-equivalent degrees"
-# Our Δlat=1.22°  →  ratio 1.377/1.22 ≈ 1.128  ≈  9/8  ✓
+# Decimal degrees; west/east are negative in the Western Hemisphere.
+# Pick a Δlon × cos(LAT_CENTER) / Δlat that matches your wall aspect ratio.
+# Example below: Tulsa-OKC corridor with +30 mi bleed on each side, sized to
+# match ~9:8 aspect on the print.
 
 BOUNDS = {
-    'west':  -98.45,   # +30 mi bleed west (kept 9:8 aspect → ~33 mi here)
-    'east':  -95.10,   # +30 mi bleed east (~33 mi to match aspect)
-    'south':  34.60,   # +30 mi bleed south
-    'north':  37.00,   # +30 mi bleed north
+    'west':  -98.45,
+    'east':  -95.10,
+    'south':  34.60,
+    'north':  37.00,
 }
 
 # Latitude used for aspect-ratio + hillshade cell-size corrections
 LAT_CENTER = (BOUNDS['north'] + BOUNDS['south']) / 2   # ≈ 35.8 °N
 
 # ─── WALL / OUTPUT DIMENSIONS ───────────────────────────────────────────────
-WALL_WIDTH_FEET  = 9
-WALL_HEIGHT_FEET = 8
+WALL_WIDTH_FEET  = 9 + 8/12      # 9' 8"  (oversized with bleed; trim to 9' before mounting)
+WALL_HEIGHT_FEET = 8 + 6/12      # 8' 6"  (oversized with bleed; trim to 8' before mounting)
 
 # ── PREVIEW vs. PRINT ──────────────────────────────────────────────────────
 # PREVIEW = True  → fast, screen-resolution render (good for style iteration)
@@ -37,8 +40,9 @@ PREVIEW       = True
 PREVIEW_DPI   = 300        # DPI for preview PNG  (was 120 — 300 lets thin lines/contours resolve)
 PREVIEW_WIDTH = 14.0       # figure width in inches for preview (height auto-calculated)
 
-PRINT_DPI     = 150        # DPI for final print export
-#   At 150 DPI:  9 ft × 150 = 16 200 px wide,  8 ft × 150 = 14 400 px tall
+PRINT_DPI     = 900        # DPI for final print export
+#   At 900 DPI:  9 ft × 900 = 97 200 px wide,  8 ft × 900 = 86 400 px tall (~8.4 GP)
+#   PDF (vector) preferred at this scale; PNG would be ~25 GB uncompressed.
 
 # ─── DEM / ELEVATION ────────────────────────────────────────────────────────
 # Resolution in metres.  30 = SRTM-class (fine for a wall map).
@@ -82,6 +86,8 @@ PALETTE = {
 #
 # To tweak aesthetics, adjust the numbers below and re-run 02_render_map.py.
 LW = {
+    # Preview line weights (pt) — tuned so lines are visible at 14" × 300 DPI.
+    # These do NOT control print thickness; see LW_PRINT below.
     'contour':        0.40,   # regular topo contour
     'index_contour':  0.95,   # thicker index (every 5th) contour
     'river_major':    1.00,   # rivers / canals
@@ -94,10 +100,26 @@ LW = {
     'border_inner':   0.70,
 }
 
+# Final-print line widths in PIXELS at PRINT_DPI on the 9 × 8 ft figure.
+# Render script converts to absolute points: pt = px × 72 / PRINT_DPI.
+# At 900 DPI: 1 px ≈ 0.08 pt ≈ 0.028 mm.
+LW_PRINT = {
+    'contour':        8,    # regular topo contour
+    'index_contour':  16,   # index (every 5th) — labelled
+    'river_major':    16,   # rivers / canals
+    'river_minor':    4,    # streams / creeks
+    'highway':        24,   # interstate & US highways
+    'major_road':     16,   # state highways / primary roads
+    'minor_road':     8,    # county / residential roads
+    'railroad':       16,   # rail lines
+    'border':         96,   # map neatline
+    'border_inner':   16,
+}
+
 # ─── HILLSHADE ───────────────────────────────────────────────────────────────
 HS_AZIMUTH   = 320    # degrees — NW light source (classic cartographic convention)
 HS_ALTITUDE  = 40     # degrees above horizon
-HS_VERT_EXAG = 6.0    # vertical exaggeration (Oklahoma topography is subtle — push it)
+HS_VERT_EXAG = 6.0    # vertical exaggeration (push higher for subtle topography)
 HS_ALPHA     = 0.0    # 0 = off (clean white base for Photoshop).  Set to 0.3–0.4 to re-enable.
 
 # ─── TYPOGRAPHY ──────────────────────────────────────────────────────────────
@@ -109,13 +131,14 @@ FONT_FAMILY = 'serif'    # built-in matplotlib serif; swap for 'IM Fell English'
 # Font sizes are in points and tuned for the PREVIEW figure (14 in wide).
 # They scale up automatically for the print figure.
 FONT = {
-    'city':      {'size': 9.0,  'weight': 'bold',   'style': 'normal'},
-    'town':      {'size': 7.0,  'weight': 'normal',  'style': 'normal'},
-    'village':   {'size': 5.5,  'weight': 'normal',  'style': 'italic'},
-    'hamlet':    {'size': 4.5,  'weight': 'normal',  'style': 'italic'},
-    'contour':   {'size': 4.0,  'weight': 'normal',  'style': 'normal'},
-    'title':     {'size': 28.0, 'weight': 'bold',   'style': 'normal'},
-    'subtitle':  {'size': 14.0, 'weight': 'normal',  'style': 'italic'},
+    # Sizes reduced 4× from previous (× 0.25) to relieve label overlap
+    'city':      {'size': 2.25,  'weight': 'bold',   'style': 'normal'},
+    'town':      {'size': 1.75,  'weight': 'normal',  'style': 'normal'},
+    'village':   {'size': 1.375, 'weight': 'normal',  'style': 'italic'},
+    'hamlet':    {'size': 1.125, 'weight': 'normal',  'style': 'italic'},
+    'contour':   {'size': 1.0,   'weight': 'normal',  'style': 'normal'},
+    'title':     {'size': 7.0,   'weight': 'bold',   'style': 'normal'},
+    'subtitle':  {'size': 3.5,   'weight': 'normal',  'style': 'italic'},
 }
 
 # ─── LEGEND / TITLE ──────────────────────────────────────────────────────────
@@ -123,6 +146,20 @@ MAP_TITLE    = "COMMERCIAL ROUTES OF OKLAHOMA"
 MAP_SUBTITLE = "Showing Principal Roads, Rails, Rivers, and Trade Corridors"
 SHOW_TITLE   = False    # set False to suppress the title block
 SHOW_LEGEND  = True     # set False to suppress the legend
+
+# ─── SLICE PREVIEW ───────────────────────────────────────────────────────────
+# When set (not None), renders only this sub-region at full print specs as a
+# vector PDF.  Use this to verify hair-thin line widths without paying the
+# render cost of the full 9 × 8 ft figure.
+# Set to None to render the full BOUNDS.
+SLICE_BOUNDS = {
+    # Lincoln County, Oklahoma — Chandler / Stroud / Prague area.
+    # ~30 × 31 miles geographic; renders to ~21 × 19 in at full print scale.
+    'west':  -97.06,
+    'east':  -96.42,
+    'south':  35.40,
+    'north':  35.85,
+}
 
 # ─── PATHS ───────────────────────────────────────────────────────────────────
 DATA_DIR   = 'data'

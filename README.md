@@ -1,8 +1,8 @@
-# Oklahoma Topo Map
+# Stylized Map Generator
 
-High-resolution topographic map renderer for the Tulsa–Oklahoma City corridor, designed for a 9 × 8 ft vinyl wall print.
+Render a high-resolution topographic + transit map of any region as a print-ready vector PDF. Pulls free public data — USGS 3DEP elevation + OpenStreetMap roads / rivers / rails / towns — clips to a bounding box you choose, and styles it through a single config file.
 
-Pulls free public data — USGS 3DEP elevation + OpenStreetMap roads / rivers / rails / towns — and renders a clean, print-ready map. All style parameters (palette, line weights, fonts, bounds) live in `config.py`.
+Built for large-format wall prints (the included config is tuned for a 9 × 8 ft vinyl print of central Oklahoma), but works for any rectangular region: change the bounds, change the wall dimensions, re-run.
 
 ## Install
 
@@ -14,30 +14,68 @@ Tested against Python 3.11+ on macOS. No API keys required.
 
 ## Use
 
-```bash
-# 1. Download elevation + OSM data (~5–15 min, network-bound)
-python 01_download_data.py
+1. **Set your region** in `config.py`:
 
-# 2. Render a preview PNG (fast; ~30 sec)
-python 02_render_map.py
-```
+   ```python
+   BOUNDS = {
+       'west':  -98.45,    # decimal degrees, negative for Western Hemisphere
+       'east':  -95.10,
+       'south':  34.60,
+       'north':  37.00,
+   }
 
-Output lands in `output/map_preview.png`. Iterate on `config.py` and re-run step 2 — no re-download needed unless you change `BOUNDS`.
+   WALL_WIDTH_FEET  = 9 + 8/12   # final printed dimensions (with bleed)
+   WALL_HEIGHT_FEET = 8 + 6/12
+   ```
 
-When you're happy with the style, set `PREVIEW = False` in `config.py` to export the full print-resolution PDF + PNG.
+   Pick `BOUNDS` so `Δlon × cos(center_lat) / Δlat` ≈ your wall aspect ratio. There's a comment in `config.py` showing the math.
+
+2. **Download the data** (network-bound; ~5 min for a small region, ~40+ min for a 100+-mile bbox because the OpenStreetMap Overpass API splits large requests):
+
+   ```bash
+   python 01_download_data.py
+   ```
+
+   Saves to `data/dem.tif` and `data/osm_data.gpkg`.
+
+3. **Render a slice preview** for fast iteration on style. Set `SLICE_BOUNDS` in `config.py` to a small sub-region (e.g. one county), then:
+
+   ```bash
+   python 02_render_map.py
+   ```
+
+   Output: `output/slice_preview.pdf` — vector PDF, **rendered at full print scale 1:1**. Open it, zoom in/out to evaluate hair-thin line widths and font sizing without paying the full-render cost.
+
+4. **Render the final print PDF**: in `config.py` set `PREVIEW = False` and `SLICE_BOUNDS = None`, then re-run `02_render_map.py`. Output lands at `output/map_PRINT.pdf` at the full wall dimensions.
 
 ## Customizing
 
 Everything visual lives in `config.py`:
 
-- `BOUNDS` — geographic extent (kept at 9:8 aspect to match the wall)
+- `BOUNDS` — geographic extent (decimal degrees)
+- `WALL_WIDTH_FEET` / `WALL_HEIGHT_FEET` — final print dimensions
+- `SLICE_BOUNDS` — sub-region rendered at print scale for fast iteration; set to `None` to render the full bounds
 - `PALETTE` — colors for paper, contours, roads, rivers, labels, etc.
-- `LW` — line weights (in matplotlib points; auto-scaled for print)
-- `FONT` — label sizes per place tier
+- `LW_PRINT` — line widths in **pixels at `PRINT_DPI`** (e.g. `4` = 4 px wide on a 900 DPI print). Easy to reason about without unit math.
+- `FONT` — label sizes per place tier (city / town / village / hamlet)
 - `CONTOUR_INTERVAL_M`, `INDEX_EVERY` — topo line spacing
 - `HS_ALPHA` — set > 0 to enable hillshade
+- `PRINT_DPI` — target DPI for the print (e.g. `900` for ultra-fine line work)
 
-`02_render_map.py` reads everything from `config.py`; you should rarely need to edit it.
+The render script reads everything from `config.py`; you should rarely need to edit it.
+
+## Print prep
+
+Output is **RGB vector PDF** by default. If your print shop requires CMYK, convert with Ghostscript using their ICC profile:
+
+```bash
+gs -sDEVICE=pdfwrite -sColorConversionStrategy=CMYK \
+   -sProcessColorModel=DeviceCMYK \
+   -sOutputICCProfile=/path/to/printer-profile.icc \
+   -o map_CMYK.pdf map_PRINT.pdf
+```
+
+Ask your shop which ICC profile to target (common: U.S. Web Coated SWOP v2, GRACoL 2006, FOGRA39).
 
 ## Smoke test
 

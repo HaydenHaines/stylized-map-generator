@@ -33,10 +33,11 @@ from config import (
     PREVIEW, PREVIEW_DPI, PREVIEW_WIDTH, PRINT_DPI,
     DEM_RESOLUTION_M,
     CONTOUR_INTERVAL_M, INDEX_EVERY, CONTOUR_SMOOTH, CONTOUR_LABEL_FMT,
-    PALETTE, LW,
+    PALETTE, LW, LW_PRINT,
     HS_AZIMUTH, HS_ALTITUDE, HS_VERT_EXAG, HS_ALPHA,
     FONT_FAMILY, FONT,
     MAP_TITLE, MAP_SUBTITLE, SHOW_TITLE, SHOW_LEGEND,
+    SLICE_BOUNDS,
     DEM_PATH, OSM_PATH, DATA_DIR, OUTPUT_DIR,
 )
 
@@ -56,7 +57,31 @@ def m_to_ft(m):
 WALL_W_IN = WALL_WIDTH_FEET  * 12   # 108 inches
 WALL_H_IN = WALL_HEIGHT_FEET * 12   #  96 inches
 
-if PREVIEW:
+# Slice mode: render a sub-region at full print specs as vector PDF.
+SLICE_MODE = (PREVIEW and SLICE_BOUNDS is not None)
+
+# Bounds actually rendered (slice or full)
+BOUNDS_USE = SLICE_BOUNDS if SLICE_MODE else BOUNDS
+
+# Print spec scale factor: FONT values in config are tuned for PREVIEW_WIDTH.
+# Multiply by PRINT_SCALE to size them for the 108-inch print figure.
+PRINT_SCALE = WALL_W_IN / PREVIEW_WIDTH   # ≈ 7.7
+
+# Use true print specifications whenever we are NOT in legacy preview mode.
+# Slice + final print both use LW_PRINT (in pixels-at-PRINT_DPI) and FONT × PRINT_SCALE.
+USE_PRINT_SPECS = SLICE_MODE or (not PREVIEW)
+
+if SLICE_MODE:
+    # Figure dimensions = WALL × (slice fraction of full bounds).
+    # This makes the PDF page 1:1 scale with the actual printed slice.
+    full_dlon = BOUNDS['east'] - BOUNDS['west']
+    full_dlat = BOUNDS['north'] - BOUNDS['south']
+    slice_dlon = SLICE_BOUNDS['east'] - SLICE_BOUNDS['west']
+    slice_dlat = SLICE_BOUNDS['north'] - SLICE_BOUNDS['south']
+    fig_w = WALL_W_IN * (slice_dlon / full_dlon)
+    fig_h = WALL_H_IN * (slice_dlat / full_dlat)
+    dpi   = PRINT_DPI
+elif PREVIEW:
     aspect_ratio = WALL_H_IN / WALL_W_IN      # ≈ 0.889
     fig_w = PREVIEW_WIDTH
     fig_h = fig_w * aspect_ratio
@@ -66,12 +91,10 @@ else:
     fig_h = WALL_H_IN
     dpi   = PRINT_DPI
 
-# Scale factor: LW and FONT values in config are tuned for PREVIEW_WIDTH.
-# For print, we multiply by PRINT_SCALE to fill the 108-inch figure.
-PRINT_SCALE = WALL_W_IN / PREVIEW_WIDTH   # ≈ 7.7
-SCALE = 1.0 if PREVIEW else PRINT_SCALE
+SCALE = PRINT_SCALE if USE_PRINT_SPECS else 1.0
 
-step(f"Figure: {fig_w:.1f} × {fig_h:.1f} in @ {dpi} DPI  ({'PREVIEW' if PREVIEW else 'PRINT'})")
+mode = 'SLICE' if SLICE_MODE else ('PREVIEW' if PREVIEW else 'PRINT')
+step(f"Figure: {fig_w:.2f} × {fig_h:.2f} in @ {dpi} DPI  ({mode})")
 
 # ─── Create figure ────────────────────────────────────────────────────────────
 fig = plt.figure(figsize=(fig_w, fig_h), dpi=dpi, facecolor=PALETTE['paper'])
@@ -79,8 +102,8 @@ fig = plt.figure(figsize=(fig_w, fig_h), dpi=dpi, facecolor=PALETTE['paper'])
 # Axes fill the figure (we handle margins manually via padding)
 ax = fig.add_axes([0.03, 0.04, 0.94, 0.92])   # [left, bottom, width, height] in figure fractions
 ax.set_facecolor(PALETTE['paper'])
-ax.set_xlim(BOUNDS['west'], BOUNDS['east'])
-ax.set_ylim(BOUNDS['south'], BOUNDS['north'])
+ax.set_xlim(BOUNDS_USE['west'], BOUNDS_USE['east'])
+ax.set_ylim(BOUNDS_USE['south'], BOUNDS_USE['north'])
 
 # Correct aspect ratio so longitudes and latitudes map to true distances
 # At lat θ:  1° lon ≈ cos(θ) × 1° lat  in physical distance
@@ -96,8 +119,20 @@ ax.axis('off')
 # to keep lines and labels proportionally sized on the 9-foot wall.
 
 def lw(key):
-    """Return line weight in points, scaled for current figure size."""
-    return LW[key] * SCALE
+    """Return line weight in absolute points.
+
+    Print specs (slice or full print): LW_PRINT in pixels at PRINT_DPI → pt.
+    Legacy preview: LW (tuned for visibility on a 14" PNG preview).
+    """
+    if USE_PRINT_SPECS:
+        return LW_PRINT[key] * 72.0 / PRINT_DPI
+    return LW[key]
+
+# bbox tuple for filtering OSM reads in slice mode (minx, miny, maxx, maxy)
+READ_BBOX = (
+    BOUNDS_USE['west'], BOUNDS_USE['south'],
+    BOUNDS_USE['east'], BOUNDS_USE['north'],
+) if SLICE_MODE else None
 
 def fs(key):
     """Return font size in points, scaled for current figure size."""
@@ -231,7 +266,7 @@ else:
 
     # ── Water bodies (polygons — rendered behind waterways) ──────────────────
     if 'water_bodies' in available:
-        wb = gpd.read_file(OSM_PATH, layer='water_bodies', engine='pyogrio')
+        wb = gpd.read_file(OSM_PATH, layer='water_bodies', engine='pyogrio', bbox=READ_BBOX)
         wb.plot(ax=ax,
                 color=PALETTE['water_fill'],
                 edgecolor=PALETTE['water_line'],
@@ -241,7 +276,7 @@ else:
 
     # ── Waterways (lines) ────────────────────────────────────────────────────
     if 'waterways' in available:
-        ww = gpd.read_file(OSM_PATH, layer='waterways', engine='pyogrio')
+        ww = gpd.read_file(OSM_PATH, layer='waterways', engine='pyogrio', bbox=READ_BBOX)
         is_river = ww.get('waterway', '').isin(['river', 'canal']) if 'waterway' in ww.columns \
                    else ww.index.isin([])
 
@@ -258,7 +293,7 @@ else:
 
     # ── Roads ─────────────────────────────────────────────────────────────────
     if 'roads' in available:
-        roads = gpd.read_file(OSM_PATH, layer='roads', engine='pyogrio')
+        roads = gpd.read_file(OSM_PATH, layer='roads', engine='pyogrio', bbox=READ_BBOX)
 
         road_hierarchy = [
             # (highway tag substring,    linewidth key,   color key)
@@ -288,7 +323,7 @@ else:
 
     # ── Railways ──────────────────────────────────────────────────────────────
     if 'railways' in available:
-        rail = gpd.read_file(OSM_PATH, layer='railways', engine='pyogrio')
+        rail = gpd.read_file(OSM_PATH, layer='railways', engine='pyogrio', bbox=READ_BBOX)
         # Thin black dashed line — classic rail symbol
         rail.plot(ax=ax, color=PALETTE['railroad'],
                   linewidth=lw('railroad') * 0.7, zorder=7,
@@ -297,7 +332,7 @@ else:
 
     # ── Places ────────────────────────────────────────────────────────────────
     if 'places' in available:
-        places = gpd.read_file(OSM_PATH, layer='places', engine='pyogrio')
+        places = gpd.read_file(OSM_PATH, layer='places', engine='pyogrio', bbox=READ_BBOX)
 
         # Scatter marker size is in points² — scale with figure
         place_config = {
@@ -364,21 +399,24 @@ step("Drawing border …")
 for spine in ax.spines.values():
     spine.set_visible(False)
 
-dlon = BOUNDS['east'] - BOUNDS['west']
-dlat = BOUNDS['north'] - BOUNDS['south']
+dlon = BOUNDS_USE['east'] - BOUNDS_USE['west']
+dlat = BOUNDS_USE['north'] - BOUNDS_USE['south']
 
-outer = plt.Rectangle(
-    (BOUNDS['west'], BOUNDS['south']), dlon, dlat,
-    linewidth=lw('border'), edgecolor=PALETTE['border'],
-    facecolor='none', transform=ax.transData, zorder=20,
-)
-ax.add_patch(outer)
+# Skip the neatline in slice mode — a slice should look like a section of the
+# larger print, not a self-contained mini-map.
+if not SLICE_MODE:
+    outer = plt.Rectangle(
+        (BOUNDS_USE['west'], BOUNDS_USE['south']), dlon, dlat,
+        linewidth=lw('border'), edgecolor=PALETTE['border'],
+        facecolor='none', transform=ax.transData, zorder=20,
+    )
+    ax.add_patch(outer)
 
 # ── Lat/lon tick grid (subtle) ──────────────────────────────────────────────
-for lon in np.arange(np.ceil(BOUNDS['west']), BOUNDS['east'] + 0.5, 0.5):
+for lon in np.arange(np.ceil(BOUNDS_USE['west']), BOUNDS_USE['east'] + 0.5, 0.5):
     ax.axvline(lon, color=PALETTE['grid'],
                linewidth=0.3 * SCALE, zorder=0, alpha=0.5)
-for lat in np.arange(np.ceil(BOUNDS['south']), BOUNDS['north'] + 0.5, 0.5):
+for lat in np.arange(np.ceil(BOUNDS_USE['south']), BOUNDS_USE['north'] + 0.5, 0.5):
     ax.axhline(lat, color=PALETTE['grid'],
                linewidth=0.3 * SCALE, zorder=0, alpha=0.5)
 
@@ -413,27 +451,23 @@ if SHOW_TITLE:
 # ═══════════════════════════════════════════════════════
 step("Exporting …")
 
-if PREVIEW:
-    out_png = os.path.join(OUTPUT_DIR, 'map_preview.png')
-    fig.savefig(out_png, dpi=dpi, bbox_inches='tight',
-                facecolor=PALETTE['paper'], format='png')
-    print(f"\n  ✓  Preview saved:  {out_png}")
-    print("     Open that file to review.  Adjust config.py and re-run.")
-    print("     When happy, set PREVIEW = False for the print-quality export.\n")
+# Always vector PDF; raster PNG is dropped (open the PDF to verify hair-thin
+# line widths at true print scale).
+if SLICE_MODE:
+    out_pdf = os.path.join(OUTPUT_DIR, 'slice_preview.pdf')
+    label = 'Slice preview'
+elif PREVIEW:
+    out_pdf = os.path.join(OUTPUT_DIR, 'map_preview.pdf')
+    label = 'Full-bounds preview'
 else:
-    # PDF (vector — preferred by most print shops)
-    out_pdf = os.path.join(OUTPUT_DIR, 'oklahoma_topo_PRINT.pdf')
-    fig.savefig(out_pdf, dpi=dpi, bbox_inches='tight',
-                facecolor=PALETTE['paper'], format='pdf',
-                metadata={'Creator': 'Oklahoma Topo Map Pipeline'})
-    print(f"  ✓  PDF  saved:  {out_pdf}")
+    out_pdf = os.path.join(OUTPUT_DIR, 'map_PRINT.pdf')
+    label = 'Print PDF'
 
-    # High-res PNG for Photoshop finishing (texture, color grading)
-    out_png = os.path.join(OUTPUT_DIR, 'oklahoma_topo_PRINT.png')
-    fig.savefig(out_png, dpi=dpi, bbox_inches='tight',
-                facecolor=PALETTE['paper'], format='png')
-    print(f"  ✓  PNG  saved:  {out_png}")
-    print(f"\n  Print PNG dimensions: ~{int(fig_w * dpi):,} × {int(fig_h * dpi):,} px")
+fig.savefig(out_pdf, dpi=dpi, bbox_inches='tight',
+            facecolor=PALETTE['paper'], format='pdf',
+            metadata={'Creator': 'Stylized Map Generator'})
+print(f"\n  ✓  {label} saved:  {out_pdf}")
+print(f"     Page size: {fig_w:.2f} × {fig_h:.2f} in (1:1 with print at this slice / scale)\n")
 
 plt.close(fig)
-print("\n  Done.\n")
+print("  Done.\n")
