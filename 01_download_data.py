@@ -66,6 +66,12 @@ if _cli.output_dir:
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs('output', exist_ok=True)
 
+# Remove stale GPKG so real download always starts from a clean slate.
+# Without this, test_render.py synthetic data contaminates the place layer.
+if os.path.exists(OSM_PATH):
+    os.remove(OSM_PATH)
+    print(f"  · Removed stale {OSM_PATH} (fresh download)")
+
 # ── Helper ───────────────────────────────────────────────────────────────────
 def section(title):
     print(f"\n{'─' * 55}")
@@ -189,9 +195,33 @@ try:
     )
     # Keep only point geometries (polygon admin boundaries also match 'place' tags)
     places = places[places.geometry.geom_type == 'Point'].copy()
+
+    # osmnx v2 returns a MultiIndex (element_type, osmid).  The OSM 'place' tag
+    # lives in a column; we normalise it here so the saved layer always has a
+    # clean 'place' column with values like 'town'/'village' — not the element
+    # type ('node') that bleeds in from the index in some osmnx builds.
+    PLACE_TYPES = {'city', 'town', 'village', 'hamlet'}
+    if 'place' in places.columns:
+        # If the column already has the right values, keep them; otherwise try
+        # to pull the value from the index or drop rows we can't classify.
+        bad_mask = ~places['place'].isin(PLACE_TYPES)
+        if bad_mask.any():
+            # Attempt to recover from MultiIndex level 0 (element_type is not
+            # a place type either, so these rows are unclassifiable — drop them)
+            places = places[~bad_mask].copy()
+    else:
+        # 'place' tag not exposed as a column; reconstruct from index if possible
+        places = places.copy()
+        places['place'] = 'town'   # fallback — render as town tier
+
+    # Only keep named settlements
+    if 'name' in places.columns:
+        places = places[places['name'].notna() & (places['name'] != '')].copy()
+
     keep_cols = [c for c in ['geometry', 'place', 'name', 'population'] if c in places.columns]
-    places[keep_cols].to_file(OSM_PATH, layer='places', engine='pyogrio', driver='GPKG', mode='a')
-    layers_saved.append('places')
+    if len(places) > 0:
+        places[keep_cols].to_file(OSM_PATH, layer='places', engine='pyogrio', driver='GPKG', mode='a')
+        layers_saved.append('places')
     print(f"     ✓  {len(places):,} settlements")
 except Exception as e:
     print(f"     ⚠  Settlements failed: {e}")
