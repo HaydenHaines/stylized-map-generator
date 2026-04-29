@@ -15,3 +15,5 @@ pyogrio>=0.7       # replaces fiona — pre-built binary wheels available on all
 py3dep>=0.17
 rioxarray>=0.15
 xarray>=2023.1
+psutil>=5.9        # RSS memory monitoring during render
+pikepdf>=8.0       # PDF compositing for parallel layer merge

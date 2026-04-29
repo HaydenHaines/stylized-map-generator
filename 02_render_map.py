@@ -16,9 +16,28 @@ Usage:
 import os
 import sys
 import time
+import threading
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 from scipy.ndimage import gaussian_filter
+
+try:
+    import psutil as _psutil
+    _peak_rss_mb: list[float] = [0.0]
+    _mem_stop = threading.Event()
+
+    def _memory_monitor() -> None:
+        proc = _psutil.Process()
+        while not _mem_stop.wait(5):
+            rss = proc.memory_info().rss / 1024 ** 2
+            if rss > _peak_rss_mb[0]:
+                _peak_rss_mb[0] = rss
+
+    _mem_thread = threading.Thread(target=_memory_monitor, daemon=True)
+    _mem_thread.start()
+    _HAS_PSUTIL = True
+except ImportError:
+    _HAS_PSUTIL = False
 
 # Force line-buffered stdout so progress messages stream in real time even
 # when output is captured to a file (otherwise Python block-buffers and
@@ -541,4 +560,9 @@ print(f"     Page size: {fig_w:.2f} × {fig_h:.2f} in (1:1 with print at this sl
 plt.close(fig)
 total = int(time.time() - _t_start)
 mm, ss = divmod(total, 60)
-print(f"\n  Done.  Total wall: {mm:02d}:{ss:02d}\n")
+if _HAS_PSUTIL:
+    _mem_stop.set()
+    _mem_thread.join(timeout=6)
+    print(f"\n  Done.  Total wall: {mm:02d}:{ss:02d}  |  Peak RSS: {_peak_rss_mb[0]:.0f} MB\n")
+else:
+    print(f"\n  Done.  Total wall: {mm:02d}:{ss:02d}\n")
