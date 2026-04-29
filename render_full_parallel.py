@@ -58,8 +58,8 @@ LAYER_ORDER = [
 
 # ─── Worker ──────────────────────────────────────────────────────────────────
 
-def _render_one(args: tuple[str, str]) -> tuple[str, str]:
-    """Render a single named layer to *out_path* as a PDF.  Returns (name, path)."""
+def _render_one(args: tuple[str, str]) -> tuple[str, str, dict]:
+    """Render a single named layer to *out_path* as a PDF.  Returns (name, path, timings)."""
     import numpy as np
     import matplotlib
     matplotlib.use('Agg')
@@ -82,33 +82,43 @@ def _render_one(args: tuple[str, str]) -> tuple[str, str]:
     for spine in ax.spines.values():
         spine.set_visible(False)
 
+    dispatch = {
+        'background':   lambda: None,
+        'hillshade':    lambda: rl.render_hillshade(ax),
+        'contours':     lambda: rl.render_contours(ax),
+        'water_bodies': lambda: rl.render_water_bodies(ax),
+        'waterways':    lambda: rl.render_waterways(ax),
+        'roads':        lambda: rl.render_roads(ax),
+        'railways':     lambda: rl.render_railways(ax),
+        'labels':       lambda: rl.render_labels(ax),
+        'border':       lambda: rl.render_border(ax),
+    }
+    save_kwargs: dict = dict(
+        dpi=PRINT_DPI,
+        bbox_inches='tight',
+        format='pdf',
+        facecolor=fig.get_facecolor(),
+        metadata={'Creator': f'SMG layer:{layer_name}'},
+    )
+    if transparent:
+        save_kwargs['transparent'] = True
+
+    # Time render (data load + plot) and savefig separately to pinpoint bottleneck.
+    t_start = time.time()
     try:
-        dispatch = {
-            'background':   lambda: None,
-            'hillshade':    lambda: rl.render_hillshade(ax),
-            'contours':     lambda: rl.render_contours(ax),
-            'water_bodies': lambda: rl.render_water_bodies(ax),
-            'waterways':    lambda: rl.render_waterways(ax),
-            'roads':        lambda: rl.render_roads(ax),
-            'railways':     lambda: rl.render_railways(ax),
-            'labels':       lambda: rl.render_labels(ax),
-            'border':       lambda: rl.render_border(ax),
-        }
         dispatch[layer_name]()
-    finally:
-        save_kwargs: dict = dict(
-            dpi=PRINT_DPI,
-            bbox_inches='tight',
-            format='pdf',
-            facecolor=fig.get_facecolor(),
-            metadata={'Creator': f'SMG layer:{layer_name}'},
-        )
-        if transparent:
-            save_kwargs['transparent'] = True
+        t_render = time.time()
         fig.savefig(out_path, **save_kwargs)
+        t_save = time.time()
+    finally:
         plt.close(fig)
 
-    return layer_name, out_path
+    timings = {
+        'render_s':  t_render - t_start,
+        'savefig_s': t_save   - t_render,
+        'total_s':   t_save   - t_start,
+    }
+    return layer_name, out_path, timings
 
 
 # ─── pikepdf compositing ─────────────────────────────────────────────────────
@@ -162,13 +172,21 @@ def main() -> None:
         ]
 
         print(f"\n  ▸  Rendering {len(LAYER_ORDER)} layers with {args.workers} workers …\n")
+        print(f"     {'layer':<14} {'render':>8}  {'savefig':>8}  {'total':>7}  {'size':>6}")
+        print(f"     {'-'*14} {'-'*8}  {'-'*8}  {'-'*7}  {'-'*6}")
         with mp.Pool(processes=args.workers) as pool:
             completed: list[tuple[str, str]] = []
-            for name, path in pool.imap_unordered(_render_one, layer_jobs):
+            for name, path, timings in pool.imap_unordered(_render_one, layer_jobs):
                 elapsed = int(time.time() - t0)
                 mm, ss  = divmod(elapsed, 60)
                 size_mb = Path(path).stat().st_size / 1024 ** 2
-                print(f"     [{mm:02d}:{ss:02d}] ✓  {name} ({size_mb:.0f} MB)")
+                print(
+                    f"     [{mm:02d}:{ss:02d}] ✓  {name:<12}"
+                    f"  {timings['render_s']:>6.0f}s"
+                    f"  {timings['savefig_s']:>6.0f}s"
+                    f"  {timings['total_s']:>5.0f}s"
+                    f"  {size_mb:>4.0f} MB"
+                )
                 completed.append((name, path))
 
         # Sort back into bottom→top z-order
