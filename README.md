@@ -98,6 +98,8 @@ Ask your shop which ICC profile to target (common: U.S. Web Coated SWOP v2, GRAC
 - Serial full render: 32 GB (16 GB minimum, OOM risk during PDF save)
 - Parallel full render: 16 GB (workers share no heap; limit `--workers` on smaller machines)
 
+**OOM protection:** RSS is polled every 5 seconds. If it exceeds 90% of total system RAM the render exits immediately with a clear error message rather than thrashing in swap for hours. A low-RAM warning is printed at startup when available RAM falls below the recommended minimum for the chosen mode.
+
 **If RAM is limited or renders are slow:**
 - Increase `SIMPLIFY_TOLERANCE_DEG` (try `1e-4`) to reduce path counts
 - Increase `MIN_WATER_BODY_AREA_M2` (try `50_000` for 5 ha) to drop more small water bodies

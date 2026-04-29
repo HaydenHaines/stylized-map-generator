@@ -25,19 +25,31 @@ try:
     import psutil as _psutil
     _peak_rss_mb: list[float] = [0.0]
     _mem_stop = threading.Event()
+    _total_ram_mb = _psutil.virtual_memory().total / 1024 ** 2
 
     def _memory_monitor() -> None:
         proc = _psutil.Process()
+        _bail_thresh_mb = _total_ram_mb * 0.90
         while not _mem_stop.wait(5):
             rss = proc.memory_info().rss / 1024 ** 2
             if rss > _peak_rss_mb[0]:
                 _peak_rss_mb[0] = rss
+            if rss > _bail_thresh_mb:
+                print(
+                    f"\n  ✘  OOM BAIL: RSS {rss:.0f} MB exceeded 90% of system RAM "
+                    f"({_total_ram_mb:.0f} MB). Stopping to prevent swap thrashing.\n"
+                    "     Re-run with a smaller region (SLICE_BOUNDS) or on a machine with more RAM.",
+                    flush=True,
+                )
+                import os as _os
+                _os._exit(1)
 
     _mem_thread = threading.Thread(target=_memory_monitor, daemon=True)
     _mem_thread.start()
     _HAS_PSUTIL = True
 except ImportError:
     _HAS_PSUTIL = False
+    _total_ram_mb = None
 
 # Force line-buffered stdout so progress messages stream in real time even
 # when output is captured to a file (otherwise Python block-buffers and
@@ -192,6 +204,18 @@ SCALE = PRINT_SCALE if USE_PRINT_SPECS else 1.0
 
 mode = 'SLICE' if SLICE_MODE else ('PREVIEW' if PREVIEW else 'PRINT')
 step(f"Figure: {fig_w:.2f} × {fig_h:.2f} in @ {dpi} DPI  ({mode})")
+
+if _HAS_PSUTIL:
+    _avail_mb = _psutil.virtual_memory().available / 1024 ** 2
+    _min_mb = 8 * 1024 if (SLICE_MODE or PREVIEW) else 16 * 1024
+    _mode_label = 'slice/preview' if (SLICE_MODE or PREVIEW) else 'full-bounds'
+    if _avail_mb < _min_mb:
+        print(
+            f"  ⚠  LOW RAM: {_avail_mb / 1024:.1f} GB available; "
+            f"{_mode_label} renders need ≥ {_min_mb // 1024} GB.\n"
+            "     The render may be killed by the OOM monitor before completion.",
+            flush=True,
+        )
 
 # ─── Create figure ────────────────────────────────────────────────────────────
 fig = plt.figure(figsize=(fig_w, fig_h), dpi=dpi, facecolor=PALETTE['paper'])
