@@ -90,7 +90,7 @@ for i, tile in enumerate(tiles):
     cmd = [
         sys.executable, '02_render_map.py',
         '--preview',                    # enables SLICE_MODE when --slice is set
-        '--slice', f'{tile["w"]},{tile["s"]},{tile["e"]},{tile["n"]}',
+        f'--slice={tile["w"]},{tile["s"]},{tile["e"]},{tile["n"]}',
         '--dpi',    str(DPI),
         '--wall-w', str(WALL_W_FEET),   # full wall dims so slice scaling is correct
         '--wall-h', str(WALL_H_FEET),
