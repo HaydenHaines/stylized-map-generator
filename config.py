@@ -29,8 +29,8 @@ BOUNDS = {
 LAT_CENTER = (BOUNDS['north'] + BOUNDS['south']) / 2   # ≈ 35.8 °N
 
 # ─── WALL / OUTPUT DIMENSIONS ───────────────────────────────────────────────
-WALL_WIDTH_FEET  = 9 + 6/12      # 9' 6"  final print width
-WALL_HEIGHT_FEET = 7 + 3/12      # 7' 3"  proportional to geographic extent at this width
+WALL_WIDTH_FEET  = 10 + 10/12     # 10' 10"  proportional to geographic extent at this height
+WALL_HEIGHT_FEET =  8 +  3/12     #  8'  3"  final print height
 
 # ── PREVIEW vs. PRINT ──────────────────────────────────────────────────────
 # PREVIEW = True  → fast, screen-resolution render (good for style iteration)
