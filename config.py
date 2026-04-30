@@ -40,9 +40,8 @@ PREVIEW       = False
 PREVIEW_DPI   = 300        # DPI for preview PNG  (was 120 — 300 lets thin lines/contours resolve)
 PREVIEW_WIDTH = 14.0       # figure width in inches for preview (height auto-calculated)
 
-PRINT_DPI     = 300        # DPI for final print export
-#   900 DPI OOMs on 64 GB RAM (130×99 in figure needs ~40 GB just for the hillshade buffer).
-#   300 DPI is fine: hillshade embeds at 39 000 px wide; all roads/labels are crisp vectors.
+PRINT_DPI     = 600        # DPI for final print export
+#   900 DPI OOMs on 64 GB RAM. 600 DPI embeds hillshade at 78 000 px wide; vectors stay crisp.
 
 # ─── DEM / ELEVATION ────────────────────────────────────────────────────────
 # Resolution in metres.  30 = SRTM-class (fine for a wall map).
