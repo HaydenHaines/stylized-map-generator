@@ -118,8 +118,19 @@ bbox = (BOUNDS['west'], BOUNDS['south'], BOUNDS['east'], BOUNDS['north'])
 try:
     dem = py3dep.get_dem(bbox, resolution=DEM_RESOLUTION_M, crs="EPSG:4326")
     dem.rio.to_raster(DEM_PATH)
+    # Verify on-disk dimensions match in-memory (py3dep cache can silently return
+    # a coarser previously-cached raster if the TIFF write doesn't overwrite cleanly)
+    import rasterio as _rio
+    with _rio.open(DEM_PATH) as _r:
+        disk_w, disk_h = _r.width, _r.height
+    mem_w, mem_h = dem.shape[1], dem.shape[0]
+    if disk_w != mem_w or disk_h != mem_h:
+        print(f"\n  WARNING: on-disk DEM ({disk_w}×{disk_h}) differs from in-memory "
+              f"({mem_w}×{mem_h}). Deleting and re-saving …")
+        os.remove(DEM_PATH)
+        dem.rio.to_raster(DEM_PATH)
     print(f"  ✓  DEM saved → {DEM_PATH}")
-    print(f"     Shape : {dem.shape[1]} × {dem.shape[0]} px")
+    print(f"     Shape : {mem_w} × {mem_h} px")
     print(f"     Elevation range : {float(dem.min()):.0f} – {float(dem.max()):.0f} m")
 except Exception as e:
     print(f"\n  ERROR downloading DEM: {e}")
