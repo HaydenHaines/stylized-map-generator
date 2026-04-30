@@ -16,9 +16,40 @@ Usage:
 import os
 import sys
 import time
+import threading
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 from scipy.ndimage import gaussian_filter
+
+try:
+    import psutil as _psutil
+    _peak_rss_mb: list[float] = [0.0]
+    _mem_stop = threading.Event()
+    _total_ram_mb = _psutil.virtual_memory().total / 1024 ** 2
+
+    def _memory_monitor() -> None:
+        proc = _psutil.Process()
+        _bail_thresh_mb = _total_ram_mb * 0.90
+        while not _mem_stop.wait(5):
+            rss = proc.memory_info().rss / 1024 ** 2
+            if rss > _peak_rss_mb[0]:
+                _peak_rss_mb[0] = rss
+            if rss > _bail_thresh_mb:
+                print(
+                    f"\n  ✘  OOM BAIL: RSS {rss:.0f} MB exceeded 90% of system RAM "
+                    f"({_total_ram_mb:.0f} MB). Stopping to prevent swap thrashing.\n"
+                    "     Re-run with a smaller region (SLICE_BOUNDS) or on a machine with more RAM.",
+                    flush=True,
+                )
+                import os as _os
+                _os._exit(1)
+
+    _mem_thread = threading.Thread(target=_memory_monitor, daemon=True)
+    _mem_thread.start()
+    _HAS_PSUTIL = True
+except ImportError:
+    _HAS_PSUTIL = False
+    _total_ram_mb = None
 
 # Force line-buffered stdout so progress messages stream in real time even
 # when output is captured to a file (otherwise Python block-buffers and
@@ -29,6 +60,59 @@ try:
 except AttributeError:
     pass  # older Python
 
+import argparse as _argparse
+import importlib.util as _imputil
+
+# ── Config loading (--config pre-parsed before any config values are read) ────
+def _load_config_module(path):
+    spec = _imputil.spec_from_file_location('_map_config', os.path.abspath(path))
+    mod = _imputil.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+_pre = _argparse.ArgumentParser(add_help=False)
+_pre.add_argument('--config', metavar='FILE')
+_pre_args, _ = _pre.parse_known_args()
+
+if _pre_args.config:
+    _cfg = _load_config_module(_pre_args.config)
+else:
+    import config as _cfg
+
+BOUNDS               = _cfg.BOUNDS
+LAT_CENTER           = _cfg.LAT_CENTER
+WALL_WIDTH_FEET      = _cfg.WALL_WIDTH_FEET
+WALL_HEIGHT_FEET     = _cfg.WALL_HEIGHT_FEET
+PREVIEW              = _cfg.PREVIEW
+PREVIEW_DPI          = _cfg.PREVIEW_DPI
+PREVIEW_WIDTH        = _cfg.PREVIEW_WIDTH
+PRINT_DPI            = _cfg.PRINT_DPI
+DEM_RESOLUTION_M     = _cfg.DEM_RESOLUTION_M
+CONTOUR_INTERVAL_M   = _cfg.CONTOUR_INTERVAL_M
+INDEX_EVERY          = _cfg.INDEX_EVERY
+CONTOUR_SMOOTH       = _cfg.CONTOUR_SMOOTH
+CONTOUR_LABEL_FMT    = _cfg.CONTOUR_LABEL_FMT
+PALETTE              = _cfg.PALETTE
+LW                   = _cfg.LW
+LW_PRINT             = _cfg.LW_PRINT
+HS_AZIMUTH           = _cfg.HS_AZIMUTH
+HS_ALTITUDE          = _cfg.HS_ALTITUDE
+HS_VERT_EXAG         = _cfg.HS_VERT_EXAG
+HS_ALPHA             = _cfg.HS_ALPHA
+FONT_FAMILY          = _cfg.FONT_FAMILY
+FONT                 = _cfg.FONT
+MAP_TITLE            = _cfg.MAP_TITLE
+MAP_SUBTITLE         = _cfg.MAP_SUBTITLE
+SHOW_TITLE           = _cfg.SHOW_TITLE
+SHOW_LEGEND          = _cfg.SHOW_LEGEND
+SHOW_GRID            = _cfg.SHOW_GRID
+SLICE_BOUNDS         = _cfg.SLICE_BOUNDS
+SIMPLIFY_TOLERANCE_DEG = _cfg.SIMPLIFY_TOLERANCE_DEG
+DEM_PATH             = _cfg.DEM_PATH
+OSM_PATH             = _cfg.OSM_PATH
+DATA_DIR             = _cfg.DATA_DIR
+OUTPUT_DIR           = _cfg.OUTPUT_DIR
+
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -38,19 +122,56 @@ from matplotlib.colors import LightSource, LinearSegmentedColormap
 from matplotlib.patches import FancyBboxPatch
 import rasterio
 
-from config import (
-    BOUNDS, LAT_CENTER,
-    WALL_WIDTH_FEET, WALL_HEIGHT_FEET,
-    PREVIEW, PREVIEW_DPI, PREVIEW_WIDTH, PRINT_DPI,
-    DEM_RESOLUTION_M,
-    CONTOUR_INTERVAL_M, INDEX_EVERY, CONTOUR_SMOOTH, CONTOUR_LABEL_FMT,
-    PALETTE, LW, LW_PRINT,
-    HS_AZIMUTH, HS_ALTITUDE, HS_VERT_EXAG, HS_ALPHA,
-    FONT_FAMILY, FONT,
-    MAP_TITLE, MAP_SUBTITLE, SHOW_TITLE, SHOW_LEGEND,
-    SLICE_BOUNDS, SIMPLIFY_TOLERANCE_DEG,
-    DEM_PATH, OSM_PATH, DATA_DIR, OUTPUT_DIR,
+# ── CLI overrides (all default to config.py values) ──────────────────────────
+_ap = _argparse.ArgumentParser(
+    description='Render stylized map PDF',
+    formatter_class=_argparse.ArgumentDefaultsHelpFormatter,
+    # Use --flag=value syntax for negative numbers: --bounds=-97.0,35.0,-96.0,36.0
 )
+_ap.add_argument('--config', metavar='FILE',
+                 help='Path to an alternate config.py (replaces the default config.py)')
+_ap.add_argument('--bounds', metavar='W,S,E,N',
+                 help='Override config.BOUNDS (west,south,east,north)')
+_ap.add_argument('--slice', metavar='W,S,E,N',
+                 help='Override config.SLICE_BOUNDS (west,south,east,north)')
+_ap.add_argument('--wall-w', type=float, metavar='FEET',
+                 help='Wall width in feet (overrides config.WALL_WIDTH_FEET)')
+_ap.add_argument('--wall-h', type=float, metavar='FEET',
+                 help='Wall height in feet (overrides config.WALL_HEIGHT_FEET)')
+_ap.add_argument('--dpi', type=int,
+                 help='Override PRINT_DPI')
+_ap.add_argument('--simplify', type=float, metavar='DEG',
+                 help='Douglas-Peucker tolerance in degrees (overrides config)')
+_ap.add_argument('--output-dir', metavar='DIR',
+                 help='Output directory (overrides config.OUTPUT_DIR)')
+_mode = _ap.add_mutually_exclusive_group()
+_mode.add_argument('--preview', action='store_true', default=False,
+                   help='Force preview mode (PREVIEW=True)')
+_mode.add_argument('--print', dest='full_print', action='store_true', default=False,
+                   help='Force full print mode (PREVIEW=False)')
+_cli = _ap.parse_args()
+
+if _cli.bounds:
+    _w, _s, _e, _n = map(float, _cli.bounds.split(','))
+    BOUNDS = {'west': _w, 'south': _s, 'east': _e, 'north': _n}
+    LAT_CENTER = (BOUNDS['north'] + BOUNDS['south']) / 2
+if _cli.slice:
+    _w, _s, _e, _n = map(float, _cli.slice.split(','))
+    SLICE_BOUNDS = {'west': _w, 'south': _s, 'east': _e, 'north': _n}
+if _cli.wall_w:
+    WALL_WIDTH_FEET = _cli.wall_w
+if _cli.wall_h:
+    WALL_HEIGHT_FEET = _cli.wall_h
+if _cli.dpi:
+    PRINT_DPI = _cli.dpi
+if _cli.simplify is not None:
+    SIMPLIFY_TOLERANCE_DEG = _cli.simplify
+if _cli.output_dir:
+    OUTPUT_DIR = _cli.output_dir
+if _cli.preview:
+    PREVIEW = True
+if _cli.full_print:
+    PREVIEW = False
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -123,6 +244,18 @@ SCALE = PRINT_SCALE if USE_PRINT_SPECS else 1.0
 
 mode = 'SLICE' if SLICE_MODE else ('PREVIEW' if PREVIEW else 'PRINT')
 step(f"Figure: {fig_w:.2f} × {fig_h:.2f} in @ {dpi} DPI  ({mode})")
+
+if _HAS_PSUTIL:
+    _avail_mb = _psutil.virtual_memory().available / 1024 ** 2
+    _min_mb = 8 * 1024 if (SLICE_MODE or PREVIEW) else 16 * 1024
+    _mode_label = 'slice/preview' if (SLICE_MODE or PREVIEW) else 'full-bounds'
+    if _avail_mb < _min_mb:
+        print(
+            f"  ⚠  LOW RAM: {_avail_mb / 1024:.1f} GB available; "
+            f"{_mode_label} renders need ≥ {_min_mb // 1024} GB.\n"
+            "     The render may be killed by the OOM monitor before completion.",
+            flush=True,
+        )
 
 # ─── Create figure ────────────────────────────────────────────────────────────
 fig = plt.figure(figsize=(fig_w, fig_h), dpi=dpi, facecolor=PALETTE['paper'])
@@ -478,12 +611,13 @@ if not SLICE_MODE:
     ax.add_patch(outer)
 
 # ── Lat/lon tick grid (subtle) ──────────────────────────────────────────────
-for lon in np.arange(np.ceil(BOUNDS_USE['west']), BOUNDS_USE['east'] + 0.5, 0.5):
-    ax.axvline(lon, color=PALETTE['grid'],
-               linewidth=0.3 * SCALE, zorder=0, alpha=0.5)
-for lat in np.arange(np.ceil(BOUNDS_USE['south']), BOUNDS_USE['north'] + 0.5, 0.5):
-    ax.axhline(lat, color=PALETTE['grid'],
-               linewidth=0.3 * SCALE, zorder=0, alpha=0.5)
+if SHOW_GRID:
+    for lon in np.arange(np.ceil(BOUNDS_USE['west']), BOUNDS_USE['east'] + 0.5, 0.5):
+        ax.axvline(lon, color=PALETTE['grid'],
+                   linewidth=0.3 * SCALE, zorder=0, alpha=0.5)
+    for lat in np.arange(np.ceil(BOUNDS_USE['south']), BOUNDS_USE['north'] + 0.5, 0.5):
+        ax.axhline(lat, color=PALETTE['grid'],
+                   linewidth=0.3 * SCALE, zorder=0, alpha=0.5)
 
 # ═══════════════════════════════════════════════════════
 #  5. Title block
@@ -538,7 +672,29 @@ tick(f"✓  PDF written in {time.time()-t_save:.1f}s")
 print(f"\n  ✓  {label} saved:  {out_pdf}")
 print(f"     Page size: {fig_w:.2f} × {fig_h:.2f} in (1:1 with print at this slice / scale)")
 
+# Auto-convert to CMYK if an ICC profile is configured (print mode only)
+_CMYK_ICC = getattr(_cfg, 'CMYK_ICC_PROFILE', None)
+if not PREVIEW and _CMYK_ICC:
+    import subprocess as _sp
+    from pathlib import Path as _Path
+    cmyk_path = str(_Path(out_pdf).with_stem(_Path(out_pdf).stem + '_CMYK'))
+    tick("Converting to CMYK via Ghostscript …")
+    try:
+        _sp.run([
+            'gs', '-sDEVICE=pdfwrite', '-dNOPAUSE', '-dBATCH', '-dQUIET',
+            '-sColorConversionStrategy=CMYK', '-sProcessColorModel=DeviceCMYK',
+            f'-sOutputICCProfile={_CMYK_ICC}', f'-sOutputFile={cmyk_path}', out_pdf,
+        ], check=True)
+        tick(f"✓  CMYK PDF: {cmyk_path}")
+    except Exception as _e:
+        tick(f"⚠  CMYK conversion failed: {_e} — RGB PDF still valid")
+
 plt.close(fig)
 total = int(time.time() - _t_start)
 mm, ss = divmod(total, 60)
-print(f"\n  Done.  Total wall: {mm:02d}:{ss:02d}\n")
+if _HAS_PSUTIL:
+    _mem_stop.set()
+    _mem_thread.join(timeout=6)
+    print(f"\n  Done.  Total wall: {mm:02d}:{ss:02d}  |  Peak RSS: {_peak_rss_mb[0]:.0f} MB\n")
+else:
+    print(f"\n  Done.  Total wall: {mm:02d}:{ss:02d}\n")

@@ -1,144 +1,157 @@
 """
-test_render.py — smoke test with synthetic DEM data
-====================================================
-Generates a fake but geographically-correct DEM for the Oklahoma corridor
-using a simple terrain model (ridge + plains), then runs the full render
-pipeline.  Use this to verify everything works before running the real
-01_download_data.py download (which requires network + ~10 min).
+test_render.py — synthetic data generator + smoke test
+=======================================================
+When run directly (python test_render.py) it writes a synthetic DEM and OSM
+dataset to the standard data paths so you can validate the pipeline without a
+network round-trip.
 
-Output: output/map_preview_TEST.png
+When collected by pytest it exposes `make_synthetic_data` and a
+`synth_data` fixture used by other test modules.  The module-level data
+generation is **not** run during collection — real downloaded data is never
+clobbered by the test suite.
+
+Output (standalone run): output/map_preview_TEST.pdf
 """
 
+from __future__ import annotations
+
 import os
-import sys
 import numpy as np
-import rasterio
-from rasterio.transform import from_bounds
-from rasterio.crs import CRS
 import geopandas as gpd
-from shapely.geometry import LineString, Point, Polygon
-import pandas as pd
+from shapely.geometry import LineString, Point
 
-os.makedirs('data', exist_ok=True)
-os.makedirs('output', exist_ok=True)
 
-from config import BOUNDS, DATA_DIR, DEM_PATH, OSM_PATH
+def make_synthetic_data(dem_path: str, osm_path: str, bounds: dict) -> None:
+    """Write a synthetic DEM + OSM GeoPackage to *dem_path* / *osm_path*."""
+    import rasterio
+    from rasterio.transform import from_bounds
+    from rasterio.crs import CRS
 
-print("Generating synthetic DEM …")
+    os.makedirs(os.path.dirname(dem_path) or '.', exist_ok=True)
+    os.makedirs(os.path.dirname(osm_path) or '.', exist_ok=True)
 
-# Resolution: ~500m for fast test (real data is 30m)
-res_deg = 0.005   # ~500m at 36°N
-lons = np.arange(BOUNDS['west'], BOUNDS['east'],  res_deg)
-lats = np.arange(BOUNDS['north'], BOUNDS['south'], -res_deg)   # N→S
-W, H = len(lons), len(lats)
+    # ── DEM: ~500 m resolution synthetic terrain ──────────────────────────────
+    res_deg = 0.005
+    lons = np.arange(bounds['west'],  bounds['east'],   res_deg)
+    lats = np.arange(bounds['north'], bounds['south'], -res_deg)
+    W, H = len(lons), len(lats)
+    Xg, Yg = np.meshgrid(lons, lats)
 
-Xg, Yg = np.meshgrid(lons, lats)
+    base_elev = 280
+    west_tilt = (bounds['west'] - Xg) * 15
+    ridge = 40 * np.exp(-((Xg - (-96.7))**2 / 0.3 + (Yg - 35.7)**2 / 0.4))
+    noise = (
+        18 * np.sin(Xg * 22 + 0.5) * np.cos(Yg * 18 - 0.3) +
+        9  * np.sin(Xg * 55 - 1.2) * np.cos(Yg * 47 + 0.8) +
+        5  * np.sin(Xg * 110)      * np.cos(Yg * 95)
+    )
+    dem_synth = (base_elev + west_tilt + ridge + noise).astype(np.float32)
 
-# Synthetic terrain for the Oklahoma corridor:
-# - Gently rolling plains, slightly higher in the west (OKC side)
-# - A low ridge running NE–SW (mimics the Arbuckle / Cross Timbers uplift)
-# - Add Perlin-style noise via overlaid sine waves
+    transform = from_bounds(
+        bounds['west'], bounds['south'], bounds['east'], bounds['north'], W, H,
+    )
+    with rasterio.open(
+        dem_path, 'w', driver='GTiff',
+        height=H, width=W, count=1, dtype=np.float32,
+        crs=CRS.from_epsg(4326), transform=transform,
+    ) as dst:
+        dst.write(dem_synth, 1)
 
-base_elev = 280  # metres (roughly correct for central OK)
-west_tilt = (BOUNDS['west'] - Xg) * 15    # higher in west (Wichita Mtns direction)
-ridge = 40 * np.exp(-((Xg - (-96.7))**2 / 0.3 + (Yg - 35.7)**2 / 0.4))
+    print(f"  ✓  DEM written: {H}×{W} px, "
+          f"{dem_synth.min():.0f}–{dem_synth.max():.0f} m")
 
-# Multi-scale noise
-rng = np.random.default_rng(42)
-noise = (
-    18 * np.sin(Xg * 22 + 0.5) * np.cos(Yg * 18 - 0.3) +
-    9  * np.sin(Xg * 55 - 1.2) * np.cos(Yg * 47 + 0.8) +
-    5  * np.sin(Xg * 110)      * np.cos(Yg * 95)
-)
+    # ── OSM roads ──────────────────────────────────────────────────────────────
+    W_, E_, S_, N_ = bounds['west'], bounds['east'], bounds['south'], bounds['north']
+    mid_lon = (W_ + E_) / 2
+    mid_lat = (S_ + N_) / 2
 
-dem_synth = base_elev + west_tilt + ridge + noise
-dem_synth = dem_synth.astype(np.float32)
+    roads_gdf = gpd.GeoDataFrame({
+        'geometry': [
+            LineString([(W_ + 0.45, S_ + 0.36), (mid_lon, S_ + 0.36),
+                        (mid_lon + 0.5, S_ + 0.37), (E_ - 0.15, S_ + 0.40)]),
+            LineString([(W_ + 0.45, mid_lat + 0.05), (mid_lon, mid_lat + 0.1),
+                        (E_ - 0.15, mid_lat + 0.11)]),
+            LineString([(mid_lon, S_ + 0.10), (mid_lon, mid_lat), (mid_lon, N_ - 0.15)]),
+            LineString([(mid_lon + 0.65, S_ + 0.10), (mid_lon + 0.65, N_ - 0.15)]),
+            LineString([(mid_lon + 0.25, S_ + 0.40), (mid_lon + 0.75, mid_lat + 0.05),
+                        (E_ - 0.05, N_ - 0.55)]),
+        ],
+        'highway': ['motorway', 'primary', 'primary', 'secondary', 'tertiary'],
+        'name':    ['Interstate 40', 'US-412', 'US-177', 'OK-99', 'OK-48'],
+        'ref':     ['I-40', 'US-412', 'US-177', 'OK-99', 'OK-48'],
+    }, crs='EPSG:4326')
+    roads_gdf.to_file(osm_path, layer='roads', engine='pyogrio', driver='GPKG')
 
-transform = from_bounds(
-    BOUNDS['west'], BOUNDS['south'], BOUNDS['east'], BOUNDS['north'],
-    W, H
-)
+    # ── waterways ─────────────────────────────────────────────────────────────
+    ww_gdf = gpd.GeoDataFrame({
+        'geometry': [
+            LineString([(W_ - 0.0, N_ - 0.37), (mid_lon, N_ - 0.40),
+                        (mid_lon + 0.5, N_ - 0.45), (E_ - 0.15, N_ - 0.50)]),
+            LineString([(W_ - 0.0, S_ + 0.48), (mid_lon, S_ + 0.42),
+                        (E_ - 0.15, S_ + 0.30)]),
+            LineString([(mid_lon + 0.2, N_ - 0.15), (mid_lon + 0.1, mid_lat),
+                        (mid_lon, S_ + 0.40)]),
+        ],
+        'waterway': ['river', 'river', 'stream'],
+        'name':     ['Cimarron River', 'Canadian River', 'Deep Fork'],
+    }, crs='EPSG:4326')
+    ww_gdf.to_file(osm_path, layer='waterways', engine='pyogrio', driver='GPKG', mode='a')
 
-with rasterio.open(
-    DEM_PATH, 'w',
-    driver='GTiff',
-    height=H, width=W,
-    count=1,
-    dtype=np.float32,
-    crs=CRS.from_epsg(4326),
-    transform=transform,
-) as dst:
-    dst.write(dem_synth, 1)
+    # ── railways ──────────────────────────────────────────────────────────────
+    rail_gdf = gpd.GeoDataFrame({
+        'geometry': [
+            LineString([(W_ + 0.45, S_ + 0.42), (mid_lon, S_ + 0.44),
+                        (mid_lon + 0.5, S_ + 0.47), (E_ - 0.15, S_ + 0.48)]),
+        ],
+        'railway': ['rail'],
+        'name':    ['BNSF Rail Corridor'],
+    }, crs='EPSG:4326')
+    rail_gdf.to_file(osm_path, layer='railways', engine='pyogrio', driver='GPKG', mode='a')
 
-print(f"  ✓  DEM written: {H}×{W} px, "
-      f"{dem_synth.min():.0f}–{dem_synth.max():.0f} m")
+    # ── water bodies ──────────────────────────────────────────────────────────
+    from shapely.geometry import Polygon
+    wb_gdf = gpd.GeoDataFrame({
+        'geometry': [
+            Polygon([(mid_lon + 0.6, mid_lat + 0.5),
+                     (mid_lon + 0.9, mid_lat + 0.5),
+                     (mid_lon + 0.9, mid_lat + 0.7),
+                     (mid_lon + 0.6, mid_lat + 0.7)]),
+        ],
+        'water': ['reservoir'],
+        'name':  ['Keystone Lake'],
+    }, crs='EPSG:4326')
+    wb_gdf.to_file(osm_path, layer='water_bodies', engine='pyogrio', driver='GPKG', mode='a')
 
-print("Generating synthetic OSM vector data …")
+    # ── settlements ───────────────────────────────────────────────────────────
+    places_gdf = gpd.GeoDataFrame({
+        'geometry': [
+            Point(W_ + 0.38, S_ + 0.37),
+            Point(E_ - 0.01, N_ - 0.40),
+            Point(mid_lon + 0.32, mid_lat + 0.24),
+            Point(mid_lon - 0.07, S_ + 0.22),
+            Point(mid_lon + 0.61, S_ + 0.62),
+        ],
+        'place': ['city', 'city', 'town', 'town', 'town'],
+        'name':  ['Oklahoma City', 'Tulsa', 'Stroud', 'Shawnee', 'Sapulpa'],
+        'population': [680000, 411000, 3000, 32000, 21000],
+    }, crs='EPSG:4326')
+    places_gdf.to_file(osm_path, layer='places', engine='pyogrio', driver='GPKG', mode='a')
 
-import pyogrio
+    print(f"  ✓  OSM layers written to {osm_path}")
 
-# ── Roads: I-40 runs roughly E–W through the corridor ──────────────────────
-road_features = {
-    'geometry': [
-        LineString([(-97.45, 35.46), (-97.0, 35.46), (-96.5, 35.47), (-95.85, 35.50)]),  # I-40
-        LineString([(-97.45, 35.85), (-97.0, 35.90), (-96.5, 35.91), (-95.85, 35.95)]),  # US-412
-        LineString([(-97.0, 35.20), (-97.0, 35.65), (-97.0, 36.40)]),   # US-177 N–S
-        LineString([(-96.3, 35.20), (-96.3, 36.40)]),                    # OK-99 N–S
-        LineString([(-96.7, 35.50), (-96.2, 35.75), (-95.9, 36.00)]),   # diagonal road
-    ],
-    'highway': ['motorway', 'primary', 'primary', 'secondary', 'tertiary'],
-    'name': ['Interstate 40', 'US-412', 'US-177', 'OK-99', 'OK-48'],
-    'ref': ['I-40', 'US-412', 'US-177', 'OK-99', 'OK-48'],
-}
-roads_gdf = gpd.GeoDataFrame(road_features, crs='EPSG:4326')
-roads_gdf.to_file(OSM_PATH, layer='roads', engine='pyogrio', driver='GPKG')
 
-# ── Waterways: Cimarron + Arkansas + Canadian rivers ───────────────────────
-ww_features = {
-    'geometry': [
-        LineString([(-97.5, 36.18), (-97.0, 36.15), (-96.5, 36.10), (-95.85, 36.05)]),  # Cimarron
-        LineString([(-97.5, 35.58), (-97.0, 35.52), (-96.5, 35.48), (-95.85, 35.40)]),  # Canadian
-        LineString([(-96.7, 36.40), (-96.7, 36.10), (-96.6, 35.80), (-96.5, 35.50)]),   # Deep Fork
-    ],
-    'waterway': ['river', 'river', 'stream'],
-    'name': ['Cimarron River', 'Canadian River', 'Deep Fork'],
-}
-ww_gdf = gpd.GeoDataFrame(ww_features, crs='EPSG:4326')
-ww_gdf.to_file(OSM_PATH, layer='waterways', engine='pyogrio', driver='GPKG', mode='a')
+# ── Standalone entry point ────────────────────────────────────────────────────
+# Running `python test_render.py` generates synthetic data at the standard
+# data paths and then kicks off a preview render.
+# pytest collection does NOT run this block, so real downloaded data is safe.
 
-# ── Railways ────────────────────────────────────────────────────────────────
-rail_features = {
-    'geometry': [
-        LineString([(-97.45, 35.52), (-97.0, 35.54), (-96.5, 35.57), (-95.85, 35.58)]),
-    ],
-    'railway': ['rail'],
-    'name': ['BNSF Rail Corridor'],
-}
-rail_gdf = gpd.GeoDataFrame(rail_features, crs='EPSG:4326')
-rail_gdf.to_file(OSM_PATH, layer='railways', engine='pyogrio', driver='GPKG', mode='a')
+if __name__ == '__main__':
+    import sys
+    from config import BOUNDS, DEM_PATH, OSM_PATH
 
-# ── Settlements ─────────────────────────────────────────────────────────────
-places_data = {
-    'geometry': [
-        Point(-97.52, 35.47),   # OKC (just outside west edge — label bleeds in)
-        Point(-95.99, 36.15),   # Tulsa
-        Point(-96.68, 35.74),   # Stroud
-        Point(-96.93, 35.52),   # Shawnee
-        Point(-96.39, 36.12),   # Sapulpa
-        Point(-96.78, 36.10),   # Guthrie
-        Point(-97.09, 35.39),   # Norman
-        Point(-96.11, 35.98),   # Broken Arrow
-        Point(-96.55, 35.35),   # Ada
-        Point(-97.44, 36.40),   # Enid
-    ],
-    'place': ['city', 'city', 'town', 'town', 'town', 'town', 'town', 'town', 'town', 'city'],
-    'name': ['Oklahoma City', 'Tulsa', 'Stroud', 'Shawnee', 'Sapulpa',
-             'Guthrie', 'Norman', 'Broken Arrow', 'Ada', 'Enid'],
-    'population': [680000, 411000, 3000, 32000, 21000, 11000, 128000, 113000, 18000, 50000],
-}
-places_gdf = gpd.GeoDataFrame(places_data, crs='EPSG:4326')
-places_gdf.to_file(OSM_PATH, layer='places', engine='pyogrio', driver='GPKG', mode='a')
+    os.makedirs('data',   exist_ok=True)
+    os.makedirs('output', exist_ok=True)
 
-print(f"  ✓  OSM layers written to {OSM_PATH}")
-
-print("\n✓  Synthetic data ready.  Now run:  python3 02_render_map.py")
+    print("Generating synthetic DEM …")
+    make_synthetic_data(DEM_PATH, OSM_PATH, BOUNDS)
+    print("\n✓  Synthetic data ready.  Now run:  python3 02_render_map.py")

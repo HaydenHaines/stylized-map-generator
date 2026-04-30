@@ -66,20 +66,51 @@ The render script reads everything from `config.py`; you should rarely need to e
 
 ## Print prep
 
-Output is **RGB vector PDF** by default. If your print shop requires CMYK, convert with Ghostscript using their ICC profile:
+Output is **RGB vector PDF** by default.
+
+**CMYK conversion** (required by most print shops):
+
+1. Install Ghostscript: `sudo apt install ghostscript` / `brew install ghostscript`
+2. Run the standalone converter:
 
 ```bash
-gs -sDEVICE=pdfwrite -sColorConversionStrategy=CMYK \
-   -sProcessColorModel=DeviceCMYK \
-   -sOutputICCProfile=/path/to/printer-profile.icc \
-   -o map_CMYK.pdf map_PRINT.pdf
+python 03_to_cmyk.py --input output/map_PRINT.pdf --icc /path/to/profile.icc
 ```
+
+Or set `CMYK_ICC_PROFILE = '/path/to/profile.icc'` in `config.py` — CMYK conversion then runs automatically at the end of every print render.
 
 Ask your shop which ICC profile to target (common: U.S. Web Coated SWOP v2, GRACoL 2006, FOGRA39).
 
 ## Smoke test
 
 `python test_render.py` runs the pipeline against a synthetic DEM, useful for validating the install without a network round-trip.
+
+## Performance & RAM
+
+| Mode | Typical wall time | Peak RSS |
+|------|-------------------|----------|
+| Slice preview (`PREVIEW=True`, `SLICE_BOUNDS` set) | 5–30 min (varies by area) | 2–10 GB |
+| Full bounds serial (`python 02_render_map.py --print`) | 8–15 h | 16–32 GB |
+| Full bounds parallel (`python render_full_parallel.py`) | ~time of heaviest layer | 4–8 GB per worker |
+
+**Minimum recommended RAM:**
+- Slice renders: 8 GB
+- Serial full render: 32 GB (16 GB minimum, OOM risk during PDF save)
+- Parallel full render: 16 GB (workers share no heap; limit `--workers` on smaller machines)
+
+**OOM protection:** RSS is polled every 5 seconds. If it exceeds 90% of total system RAM the render exits immediately with a clear error message rather than thrashing in swap for hours. A low-RAM warning is printed at startup when available RAM falls below the recommended minimum for the chosen mode.
+
+**If RAM is limited or renders are slow:**
+- Increase `SIMPLIFY_TOLERANCE_DEG` (try `1e-4`) to reduce path counts
+- Increase `MIN_WATER_BODY_AREA_M2` (try `50_000` for 5 ha) to drop more small water bodies
+- Use slice mode for style iteration; only full-render when ready to send to the shop
+
+**Bottleneck:** `fig.savefig(format='pdf')` — matplotlib encodes every vector path sequentially. The parallel renderer (`render_full_parallel.py`) splits this across cores, bounding total time to roughly the slowest single layer (typically roads at ~635 k segments for a state-sized bbox). Phase timings are printed during the run to show exactly where time is spent.
+
+**Observed slice timing** (Lincoln County, ~30×31 mi, synthetic data):
+- OSM load + simplify: ~1.5 s (parallel ThreadPoolExecutor, 5 layers)
+- Contour generation: ~7 s
+- `savefig` PDF encoding: dominant cost; scales with total vector path count
 
 ## Data sources
 
