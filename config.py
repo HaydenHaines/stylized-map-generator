@@ -29,13 +29,13 @@ BOUNDS = {
 LAT_CENTER = (BOUNDS['north'] + BOUNDS['south']) / 2   # ≈ 35.8 °N
 
 # ─── WALL / OUTPUT DIMENSIONS ───────────────────────────────────────────────
-WALL_WIDTH_FEET  = 9 + 8/12      # 9' 8"  (oversized with bleed; trim to 9' before mounting)
-WALL_HEIGHT_FEET = 8 + 6/12      # 8' 6"  (oversized with bleed; trim to 8' before mounting)
+WALL_WIDTH_FEET  = 9 + 6/12      # 9' 6"  final print width
+WALL_HEIGHT_FEET = 7 + 3/12      # 7' 3"  proportional to geographic extent at this width
 
 # ── PREVIEW vs. PRINT ──────────────────────────────────────────────────────
 # PREVIEW = True  → fast, screen-resolution render (good for style iteration)
 # PREVIEW = False → full print-resolution export (slow, large file)
-PREVIEW       = True
+PREVIEW       = False
 
 PREVIEW_DPI   = 300        # DPI for preview PNG  (was 120 — 300 lets thin lines/contours resolve)
 PREVIEW_WIDTH = 14.0       # figure width in inches for preview (height auto-calculated)

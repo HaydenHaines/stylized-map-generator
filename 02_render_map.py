@@ -273,12 +273,6 @@ ax.set_aspect(1.0 / cos_lat)
 
 ax.axis('off')
 
-# Rasterize all elements below zorder 10 (hillshade, contours, roads, waterways,
-# railways) into a single bitmap during PDF encoding. Labels (zorder=11) and
-# borders (zorder=20+) stay as crisp vectors. Cuts PDF write from ~10 min to
-# seconds by replacing tens of thousands of path objects with one raster image.
-ax.set_rasterization_zorder(10)
-
 # ─── Scale helpers ────────────────────────────────────────────────────────────
 # matplotlib line widths and font sizes are in "points" (1 pt = 1/72 inch).
 # They are ABSOLUTE on output — a 1pt line is always 1/72" regardless of figure size.
