@@ -176,6 +176,11 @@ try:
         BBOX,
         tags={'waterway': ['river', 'stream', 'canal', 'drain']},
     )
+    # osmnx v2: MultiIndex (element_type, osmid). Keep only 'way' elements —
+    # 'relation' elements are route relations with simplified straight geometry.
+    if hasattr(ww.index, 'get_level_values'):
+        ww = ww[ww.index.get_level_values(0) == 'way'].copy()
+    ww.reset_index(drop=True, inplace=True)
     ww = ww[ww.geometry.geom_type.isin(['LineString', 'MultiLineString'])].copy()
     keep_cols = [c for c in ['geometry', 'waterway', 'name'] if c in ww.columns]
     ww[keep_cols].to_file(OSM_PATH, layer='waterways', engine='pyogrio', driver='GPKG', mode='a')
@@ -191,6 +196,10 @@ try:
         BBOX,
         tags={'natural': 'water'},
     )
+    # Keep only 'way'/'relation' polygon elements; drop 'node' points
+    if hasattr(wb.index, 'get_level_values'):
+        wb = wb[wb.index.get_level_values(0).isin(['way', 'relation'])].copy()
+    wb.reset_index(drop=True, inplace=True)
     wb = wb[wb.geometry.geom_type.isin(['Polygon', 'MultiPolygon'])].copy()
     if MIN_WATER_BODY_AREA_M2 > 0 and len(wb) > 0:
         before = len(wb)
@@ -214,6 +223,11 @@ try:
         BBOX,
         tags={'railway': ['rail', 'narrow_gauge', 'preserved']},
     )
+    # osmnx v2: MultiIndex (element_type, osmid). Keep only 'way' elements —
+    # 'relation' elements are route corridors with simplified straight geometry.
+    if hasattr(rail.index, 'get_level_values'):
+        rail = rail[rail.index.get_level_values(0) == 'way'].copy()
+    rail.reset_index(drop=True, inplace=True)
     rail = rail[rail.geometry.geom_type.isin(['LineString', 'MultiLineString'])].copy()
     keep_cols = [c for c in ['geometry', 'railway', 'name'] if c in rail.columns]
     rail[keep_cols].to_file(OSM_PATH, layer='railways', engine='pyogrio', driver='GPKG', mode='a')
@@ -232,10 +246,11 @@ try:
     # Keep only point geometries (polygon admin boundaries also match 'place' tags)
     places = places[places.geometry.geom_type == 'Point'].copy()
 
-    # osmnx v2 returns a MultiIndex (element_type, osmid).  The OSM 'place' tag
-    # lives in a column; we normalise it here so the saved layer always has a
-    # clean 'place' column with values like 'town'/'village' — not the element
-    # type ('node') that bleeds in from the index in some osmnx builds.
+    # osmnx v2 returns a MultiIndex (element_type, osmid). Reset before any
+    # column access so the 'element' index level can't overwrite 'place'.
+    places.reset_index(drop=True, inplace=True)
+
+    # Only keep rows where 'place' is a recognised settlement type.
     PLACE_TYPES = {'city', 'town', 'village', 'hamlet'}
     if 'place' in places.columns:
         # If the column already has the right values, keep them; otherwise try
