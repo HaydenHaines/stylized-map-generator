@@ -182,6 +182,7 @@ try:
         ww = ww[ww.index.get_level_values(0) == 'way'].copy()
     ww.reset_index(drop=True, inplace=True)
     ww = ww[ww.geometry.geom_type.isin(['LineString', 'MultiLineString'])].copy()
+    ww = ww[~ww.geometry.apply(lambda g: g.wkb).duplicated()].copy()
     keep_cols = [c for c in ['geometry', 'waterway', 'name'] if c in ww.columns]
     ww[keep_cols].to_file(OSM_PATH, layer='waterways', engine='pyogrio', driver='GPKG', mode='a')
     layers_saved.append('waterways')
@@ -229,6 +230,7 @@ try:
         rail = rail[rail.index.get_level_values(0) == 'way'].copy()
     rail.reset_index(drop=True, inplace=True)
     rail = rail[rail.geometry.geom_type.isin(['LineString', 'MultiLineString'])].copy()
+    rail = rail[~rail.geometry.apply(lambda g: g.wkb).duplicated()].copy()
     keep_cols = [c for c in ['geometry', 'railway', 'name'] if c in rail.columns]
     rail[keep_cols].to_file(OSM_PATH, layer='railways', engine='pyogrio', driver='GPKG', mode='a')
     layers_saved.append('railways')
