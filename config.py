@@ -19,18 +19,18 @@ import numpy as np
 # match ~9:8 aspect on the print.
 
 BOUNDS = {
-    'west':  -98.45,
-    'east':  -95.10,
-    'south':  34.60,
-    'north':  37.00,
+    'west':  -98.3164,   # recentered on Stroud, OK (35.7489°N, 96.6567°W)
+    'east':  -94.9970,
+    'south':  34.5489,
+    'north':  36.9489,
 }
 
 # Latitude used for aspect-ratio + hillshade cell-size corrections
 LAT_CENTER = (BOUNDS['north'] + BOUNDS['south']) / 2   # ≈ 35.8 °N
 
 # ─── WALL / OUTPUT DIMENSIONS ───────────────────────────────────────────────
-WALL_WIDTH_FEET  = 9 + 8/12      # 9' 8"  (oversized with bleed; trim to 9' before mounting)
-WALL_HEIGHT_FEET = 8 + 6/12      # 8' 6"  (oversized with bleed; trim to 8' before mounting)
+WALL_WIDTH_FEET  = 9 + 2/12      # 9' 2"
+WALL_HEIGHT_FEET = 8 + 2/12      # 8' 2"
 
 # ── PREVIEW vs. PRINT ──────────────────────────────────────────────────────
 # PREVIEW = True  → fast, screen-resolution render (good for style iteration)
@@ -116,6 +116,29 @@ LW_PRINT = {
     'border_inner':   16,
 }
 
+# ─── TILE RENDERING ──────────────────────────────────────────────────────────────
+# Divide the full BOUNDS into a TILE_ROWS × TILE_COLS grid and render each tile
+# as a separate PDF using 03_tile_render.py.  Tiles overlap by TILE_OVERLAP_DEG
+# to prevent visible seams when the print shop assembles panels.
+TILE_COLS        = 3      # columns (left → right)
+TILE_ROWS        = 3      # rows    (top  → bottom)
+TILE_OVERLAP_DEG = 0.02   # bleed between adjacent tiles (degrees)
+TILE_MAX_WORKERS = 1      # parallel render processes — watch RAM (~2.5 GB each)
+
+# ─── WATER BODY FILTER ──────────────────────────────────────────────────────────
+# Minimum area to render as a water body polygon.  Drops micro-features (puddles,
+# drainage pits) that inflate render time without contributing to the map.
+# 1 ha ≈ 2.5 acres (farm pond threshold); 0.1 ha ≈ 0.25 acres (keep most ponds).
+WATER_BODY_MIN_AREA_HA = 0.1
+
+# ─── LINEAR FEATURE LENGTH FILTERS ─────────────────────────────────────────────
+# Minimum segment length (decimal degrees) for minor linear features.
+# Segments shorter than this are not resolvable at wall-map scale and are dropped
+# at preprocessing time to keep parquet sizes and render memory manageable.
+#   0.003° ≈ 330m;  0.005° ≈ 550m
+MIN_WATERWAY_LENGTH_DEG = 0.003   # applies to non-river/canal waterways
+MIN_ROAD_LENGTH_DEG     = 0.010   # applies to residential, unclassified, tertiary roads
+
 # ─── GEOMETRY SIMPLIFICATION ───────────────────────────────────────────────────
 # Apply Douglas-Peucker simplification to OSM line/polygon geometries before
 # plotting.  Tolerance in decimal degrees; sub-pixel values produce no visible
@@ -128,7 +151,7 @@ SIMPLIFY_TOLERANCE_DEG = 5e-5
 HS_AZIMUTH   = 320    # degrees — NW light source (classic cartographic convention)
 HS_ALTITUDE  = 40     # degrees above horizon
 HS_VERT_EXAG = 6.0    # vertical exaggeration (push higher for subtle topography)
-HS_ALPHA     = 0.0    # 0 = off (clean white base for Photoshop).  Set to 0.3–0.4 to re-enable.
+HS_ALPHA     = 0.35   # 0 = off (clean white base for Photoshop).  Set to 0.3–0.4 to re-enable.
 
 # ─── TYPOGRAPHY ──────────────────────────────────────────────────────────────
 # Sizes are in points and designed for the PREVIEW figure.
@@ -172,5 +195,6 @@ SLICE_BOUNDS = {
 # ─── PATHS ───────────────────────────────────────────────────────────────────
 DATA_DIR   = 'data'
 OUTPUT_DIR = 'output'
+CACHE_DIR  = 'cache'
 DEM_PATH   = f'{DATA_DIR}/dem.tif'
 OSM_PATH   = f'{DATA_DIR}/osm_data.gpkg'

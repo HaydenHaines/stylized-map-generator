@@ -38,6 +38,8 @@ from matplotlib.colors import LightSource, LinearSegmentedColormap
 from matplotlib.patches import FancyBboxPatch
 import rasterio
 
+import argparse as _ap, json as _json
+
 from config import (
     BOUNDS, LAT_CENTER,
     WALL_WIDTH_FEET, WALL_HEIGHT_FEET,
@@ -48,11 +50,26 @@ from config import (
     HS_AZIMUTH, HS_ALTITUDE, HS_VERT_EXAG, HS_ALPHA,
     FONT_FAMILY, FONT,
     MAP_TITLE, MAP_SUBTITLE, SHOW_TITLE, SHOW_LEGEND,
-    SLICE_BOUNDS, SIMPLIFY_TOLERANCE_DEG,
+    SLICE_BOUNDS, SIMPLIFY_TOLERANCE_DEG, WATER_BODY_MIN_AREA_HA,
     DEM_PATH, OSM_PATH, DATA_DIR, OUTPUT_DIR,
 )
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# ─── Tile mode (invoked by 03_tile_render.py) ─────────────────────────────────
+_parser = _ap.ArgumentParser(add_help=False)
+_parser.add_argument('--tile-bounds', default=None)
+_parser.add_argument('--tile-output', default=None)
+_parser.add_argument('--print-dpi',   default=None, type=int)
+_parser.add_argument('--slice-output', default=None)
+_targs, _ = _parser.parse_known_args()
+
+TILE_MODE         = _targs.tile_bounds is not None
+_tile_bounds_dict = _json.loads(_targs.tile_bounds) if TILE_MODE else None
+_tile_output_path = _targs.tile_output
+if _targs.print_dpi is not None:
+    PRINT_DPI = _targs.print_dpi
+_slice_output_path = _targs.slice_output
 
 # ─── Utility ──────────────────────────────────────────────────────────────────
 _t_start = time.time()
@@ -86,10 +103,13 @@ WALL_W_IN = WALL_WIDTH_FEET  * 12   # 108 inches
 WALL_H_IN = WALL_HEIGHT_FEET * 12   #  96 inches
 
 # Slice mode: render a sub-region at full print specs as vector PDF.
-SLICE_MODE = (PREVIEW and SLICE_BOUNDS is not None)
-
-# Bounds actually rendered (slice or full)
-BOUNDS_USE = SLICE_BOUNDS if SLICE_MODE else BOUNDS
+# Tile mode reuses all SLICE_MODE logic (DEM clip, print specs, no border).
+if TILE_MODE:
+    SLICE_MODE = True
+    BOUNDS_USE = _tile_bounds_dict
+else:
+    SLICE_MODE = (PREVIEW and SLICE_BOUNDS is not None)
+    BOUNDS_USE = SLICE_BOUNDS if SLICE_MODE else BOUNDS
 
 # Print spec scale factor: FONT values in config are tuned for PREVIEW_WIDTH.
 # Multiply by PRINT_SCALE to size them for the 108-inch print figure.
@@ -240,14 +260,25 @@ cmap_shade = LinearSegmentedColormap.from_list(
     'hs', [PALETTE['hillshade_dark'], PALETTE['paper']], N=256
 )
 
-ax.imshow(
-    shade,
+# Extra smoothing before contouring keeps path counts manageable without
+# losing the macro terrain shape visible at wall-map scale.
+shade_vec = gaussian_filter(shade, sigma=4)
+
+x_hs = np.linspace(bnd.left,   bnd.right, shade_vec.shape[1])
+y_hs = np.linspace(bnd.bottom, bnd.top,   shade_vec.shape[0])
+# contourf expects y increasing upward; imshow origin='upper' flips the array,
+# so reverse rows to match.
+shade_vec = shade_vec[::-1]
+
+levels_hs = np.linspace(shade_vec.min(), shade_vec.max(), 33)  # 32 filled bands
+
+ax.contourf(
+    x_hs, y_hs, shade_vec,
+    levels=levels_hs,
     cmap=cmap_shade,
-    extent=[bnd.left, bnd.right, bnd.bottom, bnd.top],
-    origin='upper',
     alpha=HS_ALPHA,
     zorder=1,
-    interpolation='bilinear',
+    antialiased=False,   # suppresses thin artifact lines between adjacent bands
 )
 
 # ═══════════════════════════════════════════════════════
@@ -342,7 +373,9 @@ else:
 
     # ── Water bodies (polygons — rendered behind waterways) ──────────────────
     wb = layers['water_bodies']
-    if wb is not None:
+    if wb is not None and len(wb):
+        min_area_sqd = WATER_BODY_MIN_AREA_HA / (111 * 111 * np.cos(np.radians(LAT_CENTER)) * 100)
+        wb = wb[wb.area > min_area_sqd]
         tick(f"plotting {len(wb):,} water bodies …")
         wb.plot(ax=ax,
                 color=PALETTE['water_fill'],
@@ -518,8 +551,11 @@ step("Exporting …")
 
 # Always vector PDF; raster PNG is dropped (open the PDF to verify hair-thin
 # line widths at true print scale).
-if SLICE_MODE:
-    out_pdf = os.path.join(OUTPUT_DIR, 'slice_preview.pdf')
+if TILE_MODE:
+    out_pdf = _tile_output_path
+    label = f'Tile {os.path.basename(_tile_output_path).replace(".pdf", "")}'
+elif SLICE_MODE:
+    out_pdf = _slice_output_path if _slice_output_path else os.path.join(OUTPUT_DIR, 'slice_preview.pdf')
     label = 'Slice preview'
 elif PREVIEW:
     out_pdf = os.path.join(OUTPUT_DIR, 'map_preview.pdf')
