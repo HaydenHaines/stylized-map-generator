@@ -257,9 +257,11 @@ def render_contours(bounds, force=False):
     dem_c = dem_smooth[yi_raster[0]:yi_raster[1], xi[0]:xi[1]]
 
     # Downsample to keep contour computation tractable for the full state.
-    # Target ~4000 px on the long axis — contour paths are already smoothed by
+    # Target ~2000 px on the long axis — contour paths are already smoothed by
     # the gaussian filter, so sub-pixel precision at this scale is redundant.
-    max_dim = 4000
+    # Paths are interpolated (not stepped), so quality impact on gentle Oklahoma
+    # terrain is minimal even at 1ft viewing distance.
+    max_dim = 2000
     ds = max(1, max(dem_c.shape[0], dem_c.shape[1]) // max_dim)
     if ds > 1:
         dem_c = dem_c[::ds, ::ds]
@@ -490,6 +492,9 @@ def render_places(bounds, force=False):
             if not name or (isinstance(name, float) and np.isnan(name)):
                 continue
             name = str(name).split(';', 1)[0].strip()
+            # Cherokee Unicode block U+13A0–U+13FF — use dedicated font for those labels
+            has_cherokee = any('Ꭰ' <= c <= '᏿' for c in name)
+            label_font = 'Plantagenet Cherokee' if has_cherokee else FONT_FAMILY
             ax.annotate(
                 name,
                 xy=(row.geometry.x, row.geometry.y),
@@ -497,7 +502,7 @@ def render_places(bounds, force=False):
                 textcoords='offset points',
                 ha='center', va='bottom',
                 fontsize=fs(ptype if ptype in FONT else 'town'),
-                fontfamily=FONT_FAMILY,
+                fontfamily=label_font,
                 fontweight=fspec['weight'],
                 fontstyle=fspec.get('style', 'normal'),
                 color=PALETTE['town_label'],
