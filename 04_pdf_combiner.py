@@ -24,30 +24,23 @@ Usage:
 """
 
 import os, sys, time, argparse
+from pathlib import Path
 import fitz   # PyMuPDF
 
-from config import (
-    BOUNDS, WALL_WIDTH_FEET, WALL_HEIGHT_FEET,
-    PALETTE, SLICE_BOUNDS, OUTPUT_DIR,
-)
+from render_config import RenderJob, RenderPaths, job_from_config, DEFAULT_LAYER_NAMES
 
-LAYERS_DIR = os.path.join(OUTPUT_DIR, 'layers')
-OUT_PATH   = os.path.join(OUTPUT_DIR, 'map.pdf')
+# Module-level state — set by _setup() before any render function runs.
+_LAYERS_DIR: str = ''
+_OUT_PATH:   str = ''
+_LAYER_ORDER: list = []
 
-WALL_W_PT = WALL_WIDTH_FEET  * 12 * 72
-WALL_H_PT = WALL_HEIGHT_FEET * 12 * 72
 
-# Bottom-to-top composite order
-LAYER_ORDER = [
-    'hillshade',
-    'contours',
-    'waterways',
-    'water_bodies',
-    'roads',
-    'railways',
-    'places',
-    'border',
-]
+def _setup(job: RenderJob, paths: RenderPaths):
+    global _LAYERS_DIR, _OUT_PATH, _LAYER_ORDER
+    paths.makedirs()
+    _LAYERS_DIR  = str(paths.layers_dir)
+    _OUT_PATH    = str(paths.full_pdf)
+    _LAYER_ORDER = job.enabled_layers()
 
 _t_start = time.time()
 
@@ -66,29 +59,23 @@ def _hex_to_rgb(h):
     return tuple(int(h[i:i+2], 16) / 255.0 for i in (0, 2, 4))
 
 
-def main():
-    parser = argparse.ArgumentParser(description='Composite layer PDFs into final map.')
-    parser.add_argument('--preview', action='store_true',
-                        help='Use SLICE_BOUNDS page size for preview output')
-    parser.add_argument('--out', default=None,
-                        help='Override output path (default: output/map.pdf)')
-    args = parser.parse_args()
+def run(job: RenderJob, paths: RenderPaths, out_path: str | None = None) -> str:
+    """Composite layer PDFs into the final map PDF. Returns the output path."""
+    _setup(job, paths)
+    out = out_path or _OUT_PATH
 
-    out_path = args.out or OUT_PATH
-
-    # Determine page dimensions from the layer PDFs (they all share the same size)
-    sample_path = os.path.join(LAYERS_DIR, f'{LAYER_ORDER[0]}.pdf')
+    sample_path = os.path.join(_LAYERS_DIR, f'{_LAYER_ORDER[0]}.pdf')
     if not os.path.exists(sample_path):
         print(f"\n  ERROR: {sample_path} not found.  Run 03_pdf_renderer.py first.")
         sys.exit(1)
 
-    sample_doc  = fitz.open(sample_path)
-    page_rect   = sample_doc[0].rect
-    page_w      = page_rect.width
-    page_h      = page_rect.height
+    sample_doc = fitz.open(sample_path)
+    page_rect  = sample_doc[0].rect
+    page_w     = page_rect.width
+    page_h     = page_rect.height
     sample_doc.close()
 
-    print(f"\n  PDF Combiner → {out_path}")
+    print(f"\n  PDF Combiner → {out}")
     print(f"  Page: {page_w/72:.2f} × {page_h/72:.2f} in  ({page_w:.0f} × {page_h:.0f} pt)")
 
     step("Compositing layers …")
@@ -96,13 +83,8 @@ def main():
     out_doc  = fitz.open()
     out_page = out_doc.new_page(width=page_w, height=page_h)
 
-    # hillshade.pdf is rendered with an opaque paper background, so it serves
-    # as the base layer. All other layers have transparent backgrounds and
-    # composite correctly on top without PDF alpha-group issues.
-
-    # Overlay each layer in z-order
-    for name in LAYER_ORDER:
-        layer_path = os.path.join(LAYERS_DIR, f'{name}.pdf')
+    for name in _LAYER_ORDER:
+        layer_path = os.path.join(_LAYERS_DIR, f'{name}.pdf')
         if not os.path.exists(layer_path):
             tick(f"WARNING: {name}.pdf not found — skipping")
             continue
@@ -112,14 +94,26 @@ def main():
         tick(f"placed {name}.pdf")
 
     step("Saving …")
-    out_doc.save(out_path, garbage=4, deflate=True)
+    out_doc.save(out, garbage=4, deflate=True)
     out_doc.close()
 
-    size_mb = os.path.getsize(out_path) / 1e6
+    size_mb = os.path.getsize(out) / 1e6
     total   = int(time.time() - _t_start)
     mm, ss  = divmod(total, 60)
-    print(f"\n  ✓  {out_path}  ({size_mb:.1f} MB)")
+    print(f"\n  ✓  {out}  ({size_mb:.1f} MB)")
     print(f"     {mm:02d}:{ss:02d} total\n")
+    return out
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Composite layer PDFs into final map.')
+    parser.add_argument('--out', default=None,
+                        help='Override output path (default: output/map_full.pdf)')
+    args = parser.parse_args()
+
+    job   = job_from_config()
+    paths = RenderPaths(Path('.'))
+    run(job, paths, out_path=args.out)
 
 
 if __name__ == '__main__':

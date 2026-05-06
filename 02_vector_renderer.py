@@ -20,6 +20,7 @@ Usage:
 """
 
 import os, sys, json, time, argparse
+from pathlib import Path
 import numpy as np
 from scipy.ndimage import gaussian_filter
 
@@ -29,15 +30,38 @@ try:
 except AttributeError:
     pass
 
-from config import (
-    BOUNDS, LAT_CENTER,
-    CONTOUR_SMOOTH,
-    HS_AZIMUTH, HS_ALTITUDE, HS_VERT_EXAG,
-    SIMPLIFY_TOLERANCE_DEG,
-    DEM_PATH, OSM_PATH, CACHE_DIR,
-)
+from render_config import RenderJob, RenderPaths, job_from_config
 
-os.makedirs(CACHE_DIR, exist_ok=True)
+# Module-level state — populated by _setup() before processing begins.
+BOUNDS: dict              = {}
+LAT_CENTER: float         = 0.0
+CONTOUR_SMOOTH: float     = 1.2
+HS_AZIMUTH: float         = 320.0
+HS_ALTITUDE: float        = 40.0
+HS_VERT_EXAG: float       = 6.0
+SIMPLIFY_TOLERANCE_DEG: float = 5e-5
+DEM_RESOLUTION_M: int     = 30
+DEM_PATH: str             = ''
+OSM_PATH: str             = ''
+CACHE_DIR: str            = ''
+
+
+def _setup(job: RenderJob, paths: RenderPaths):
+    global BOUNDS, LAT_CENTER, CONTOUR_SMOOTH, HS_AZIMUTH, HS_ALTITUDE, HS_VERT_EXAG
+    global SIMPLIFY_TOLERANCE_DEG, DEM_RESOLUTION_M, DEM_PATH, OSM_PATH, CACHE_DIR
+    paths.makedirs()
+    BOUNDS                 = job.bounds.to_dict()
+    LAT_CENTER             = job.bounds.lat_center
+    CONTOUR_SMOOTH         = job.contour_smooth
+    HS_AZIMUTH             = job.hs_azimuth
+    HS_ALTITUDE            = job.hs_altitude
+    HS_VERT_EXAG           = job.hs_vert_exag
+    SIMPLIFY_TOLERANCE_DEG = job.simplify_tolerance_deg
+    DEM_RESOLUTION_M       = job.dem_resolution_m
+    DEM_PATH               = str(paths.dem_path)
+    OSM_PATH               = str(paths.osm_path)
+    CACHE_DIR              = str(paths.cache_dir)
+    os.makedirs(CACHE_DIR, exist_ok=True)
 
 _t_start = time.time()
 
@@ -225,22 +249,25 @@ def process_osm(force=False):
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
+def run(job: RenderJob, paths: RenderPaths, force: bool = False):
+    """Preprocess DEM + OSM data into the cache directory."""
+    _setup(job, paths)
+    print(f"\n  Vector Renderer → {CACHE_DIR}/")
+    if force:
+        print("  --force: all layers will be regenerated")
+    process_dem(force=force)
+    process_osm(force=force)
+    total = int(time.time() - _t_start)
+    mm, ss = divmod(total, 60)
+    print(f"\n  ✓  Done.  Total wall: {mm:02d}:{ss:02d}\n")
+
+
 def main():
     parser = argparse.ArgumentParser(description='Preprocess DEM and OSM data to cache.')
     parser.add_argument('--force', action='store_true',
                         help='Regenerate all cached files even if they already exist')
     args = parser.parse_args()
-
-    print(f"\n  Vector Renderer → {CACHE_DIR}/")
-    if args.force:
-        print("  --force: all layers will be regenerated")
-
-    process_dem(force=args.force)
-    process_osm(force=args.force)
-
-    total = int(time.time() - _t_start)
-    mm, ss = divmod(total, 60)
-    print(f"\n  ✓  Done.  Total wall: {mm:02d}:{ss:02d}\n")
+    run(job_from_config(), RenderPaths(Path('.')), force=args.force)
 
 
 if __name__ == '__main__':

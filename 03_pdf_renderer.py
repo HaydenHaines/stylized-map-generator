@@ -39,29 +39,75 @@ import matplotlib.patheffects as pe
 from matplotlib.colors import LightSource, LinearSegmentedColormap
 from matplotlib.collections import LineCollection
 
-from config import (
-    BOUNDS, LAT_CENTER,
-    WALL_WIDTH_FEET, WALL_HEIGHT_FEET,
-    PREVIEW_WIDTH, PRINT_DPI,
-    CONTOUR_INTERVAL_M, INDEX_EVERY, CONTOUR_LABEL_FMT,
-    PALETTE, LW_PRINT,
-    HS_ALPHA,
-    FONT_FAMILY, FONT,
-    MAP_TITLE, MAP_SUBTITLE, SHOW_TITLE,
-    SLICE_BOUNDS,
-    WATER_BODY_MIN_AREA_HA,
-    CACHE_DIR, OUTPUT_DIR,
+from render_config import (
+    RenderJob, RenderPaths, job_from_config,
+    DEFAULT_LAYER_NAMES, DEFAULT_LW_PRINT,
+    FONT as _DEFAULT_FONT, FONT_FAMILY as _DEFAULT_FONT_FAMILY, PREVIEW_WIDTH,
 )
 
-LAYERS_DIR = os.path.join(OUTPUT_DIR, 'layers')
-os.makedirs(LAYERS_DIR, exist_ok=True)
+ALL_LAYERS = DEFAULT_LAYER_NAMES
 
-ALL_LAYERS = ['hillshade', 'contours', 'water_bodies', 'waterways',
-              'roads', 'railways', 'places', 'border']
+# Module-level state — populated by _setup() before any render function runs.
+BOUNDS:               dict  = {}
+WALL_W_IN:            float = 0.0
+WALL_H_IN:            float = 0.0
+PRINT_SCALE:          float = 1.0
+PRINT_DPI:            int   = 900
+PALETTE:              dict  = {}
+LW_PRINT:             dict  = {}
+HS_ALPHA:             float = 0.35
+FONT_FAMILY:          str   = _DEFAULT_FONT_FAMILY
+FONT:                 dict  = _DEFAULT_FONT
+CONTOUR_INTERVAL_M:   int   = 10
+INDEX_EVERY:          int   = 5
+CONTOUR_LABEL_FMT:    str   = 'ft'
+WATER_BODY_MIN_AREA_HA: float = 0.5
+SHOW_TITLE:           bool  = False
+MAP_TITLE:            str   = ''
+MAP_SUBTITLE:         str   = ''
+SLICE_BOUNDS:         dict | None = None
+CACHE_DIR:            str   = ''
+LAYERS_DIR:           str   = ''
 
-WALL_W_IN  = WALL_WIDTH_FEET  * 12
-WALL_H_IN  = WALL_HEIGHT_FEET * 12
-PRINT_SCALE = WALL_W_IN / PREVIEW_WIDTH   # ≈ 7.7 — scales preview-tuned font sizes to print
+
+def _setup(job: RenderJob, paths: RenderPaths):
+    global BOUNDS, WALL_W_IN, WALL_H_IN, PRINT_SCALE, PRINT_DPI
+    global PALETTE, LW_PRINT, HS_ALPHA, CONTOUR_INTERVAL_M, INDEX_EVERY
+    global CONTOUR_LABEL_FMT, WATER_BODY_MIN_AREA_HA
+    global SHOW_TITLE, MAP_TITLE, MAP_SUBTITLE, SLICE_BOUNDS
+    global CACHE_DIR, LAYERS_DIR
+
+    paths.makedirs()
+    BOUNDS              = job.bounds.to_dict()
+    WALL_W_IN           = job.width_in
+    WALL_H_IN           = job.height_in
+    PRINT_SCALE         = WALL_W_IN / PREVIEW_WIDTH
+    PRINT_DPI           = job.print_dpi
+    PALETTE             = job.resolved_palette()
+    LW_PRINT            = DEFAULT_LW_PRINT.copy()
+    HS_ALPHA            = job.hs_alpha
+    CONTOUR_INTERVAL_M  = job.contour_interval_m
+    INDEX_EVERY         = job.index_every
+    CONTOUR_LABEL_FMT   = job.contour_label_fmt
+    WATER_BODY_MIN_AREA_HA = job.water_body_min_area_ha
+
+    if job.title:
+        SHOW_TITLE  = job.title.show
+        MAP_TITLE   = job.title.title
+        MAP_SUBTITLE = job.title.subtitle
+    else:
+        SHOW_TITLE  = False
+        MAP_TITLE   = ''
+        MAP_SUBTITLE = ''
+
+    if job.preview and job.preview.slice_bounds:
+        SLICE_BOUNDS = job.preview.slice_bounds.to_dict()
+    else:
+        SLICE_BOUNDS = None
+
+    CACHE_DIR   = str(paths.cache_dir)
+    LAYERS_DIR  = str(paths.layers_dir)
+    os.makedirs(LAYERS_DIR, exist_ok=True)
 
 _t_start = time.time()
 
@@ -575,32 +621,43 @@ _RENDER_FNS = {
 }
 
 
+def run(job: RenderJob, paths: RenderPaths,
+        layers: list[str] | None = None, force: bool = False,
+        use_slice: bool = False):
+    """Render each layer to a PDF in paths.layers_dir."""
+    _setup(job, paths)
+    bounds = SLICE_BOUNDS if (use_slice and SLICE_BOUNDS) else BOUNDS
+    render_layers = layers or job.enabled_layers()
+
+    region = 'SLICE_BOUNDS' if (use_slice and SLICE_BOUNDS) else 'BOUNDS'
+    print(f"\n  PDF Renderer → {LAYERS_DIR}/")
+    print(f"  Region: {region}   Layers: {render_layers}")
+    if force:
+        print("  --force: existing layer PDFs will be overwritten")
+
+    for name in render_layers:
+        if name in _RENDER_FNS:
+            _RENDER_FNS[name](bounds, force=force)
+        gc.collect()
+
+    total = int(time.time() - _t_start)
+    mm, ss = divmod(total, 60)
+    print(f"\n  ✓  Done.  Total wall: {mm:02d}:{ss:02d}\n")
+
+
 def main():
     parser = argparse.ArgumentParser(description='Render cached layers to per-layer PDFs.')
     parser.add_argument('--force', action='store_true',
                         help='Re-render layers even if PDFs already exist')
     parser.add_argument('--preview', action='store_true',
                         help='Render SLICE_BOUNDS region instead of full BOUNDS')
-    parser.add_argument('--layers', nargs='+', choices=ALL_LAYERS,
+    parser.add_argument('--layers', nargs='+', choices=list(_RENDER_FNS.keys()),
                         help='Render only these layers (default: all)')
     args = parser.parse_args()
 
-    bounds = SLICE_BOUNDS if (args.preview and SLICE_BOUNDS) else BOUNDS
-    layers = args.layers or ALL_LAYERS
-
-    region = 'SLICE_BOUNDS' if bounds is not BOUNDS else 'BOUNDS'
-    print(f"\n  PDF Renderer → {LAYERS_DIR}/")
-    print(f"  Region: {region}   Layers: {layers}")
-    if args.force:
-        print("  --force: existing layer PDFs will be overwritten")
-
-    for name in layers:
-        _RENDER_FNS[name](bounds, force=args.force)
-        gc.collect()
-
-    total = int(time.time() - _t_start)
-    mm, ss = divmod(total, 60)
-    print(f"\n  ✓  Done.  Total wall: {mm:02d}:{ss:02d}\n")
+    job   = job_from_config()
+    paths = RenderPaths(Path('.'))
+    run(job, paths, layers=args.layers, force=args.force, use_slice=args.preview)
 
 
 if __name__ == '__main__':
