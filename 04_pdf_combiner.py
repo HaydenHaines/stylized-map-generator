@@ -41,8 +41,8 @@ WALL_H_PT = WALL_HEIGHT_FEET * 12 * 72
 LAYER_ORDER = [
     'hillshade',
     'contours',
-    'water_bodies',
     'waterways',
+    'water_bodies',
     'roads',
     'railways',
     'places',
@@ -96,10 +96,9 @@ def main():
     out_doc  = fitz.open()
     out_page = out_doc.new_page(width=page_w, height=page_h)
 
-    # Paper background
-    paper_rgb = _hex_to_rgb(PALETTE['paper'])
-    out_page.draw_rect(out_page.rect, color=None, fill=paper_rgb)
-    tick(f"paper background filled  ({PALETTE['paper']})")
+    # hillshade.pdf is rendered with an opaque paper background, so it serves
+    # as the base layer. All other layers have transparent backgrounds and
+    # composite correctly on top without PDF alpha-group issues.
 
     # Overlay each layer in z-order
     for name in LAYER_ORDER:

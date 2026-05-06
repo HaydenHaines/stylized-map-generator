@@ -37,6 +37,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as pe
 from matplotlib.colors import LightSource, LinearSegmentedColormap
+from matplotlib.collections import LineCollection
 
 from config import (
     BOUNDS, LAT_CENTER,
@@ -90,6 +91,26 @@ def m_to_ft(m):
     return m * 3.28084
 
 
+# ─── LineCollection helper ────────────────────────────────────────────────────
+
+def _plot_lines(gdf, ax, color, linewidth, zorder, alpha=1.0):
+    """Plot line/multiline geometries via LineCollection — one numpy array, no
+    per-segment Python objects.  Much lighter than gdf.plot() for large datasets."""
+    segs = []
+    for geom in gdf.geometry:
+        if geom is None or geom.is_empty:
+            continue
+        if geom.geom_type == 'LineString':
+            segs.append(np.array(geom.coords))
+        elif geom.geom_type == 'MultiLineString':
+            for part in geom.geoms:
+                segs.append(np.array(part.coords))
+    if segs:
+        lc = LineCollection(segs, colors=color, linewidths=linewidth,
+                            zorder=zorder, alpha=alpha)
+        ax.add_collection(lc)
+
+
 # ─── Figure factory ───────────────────────────────────────────────────────────
 
 def _make_fig_ax(bounds):
@@ -106,7 +127,7 @@ def _make_fig_ax(bounds):
     fig_w = WALL_W_IN * (b_dlon / full_dlon)
     fig_h = WALL_H_IN * (b_dlat / full_dlat)
 
-    fig = plt.figure(figsize=(fig_w, fig_h), dpi=PRINT_DPI)
+    fig = plt.figure(figsize=(fig_w, fig_h), dpi=72)  # 72 = natural PDF pt/in; vector output is DPI-independent
     fig.patch.set_alpha(0)
 
     ax = fig.add_axes([0, 0, 1, 1])
@@ -119,13 +140,17 @@ def _make_fig_ax(bounds):
     return fig, ax
 
 
-def _save(fig, name):
+def _save(fig, name, transparent=True):
     out = _o(f'{name}.pdf')
     tick(f"writing {name}.pdf …")
     t0 = time.time()
-    fig.savefig(out, format='pdf', transparent=True,
-                bbox_inches=None,
-                metadata={'Creator': 'Stylized Map Generator'})
+    kwargs = dict(format='pdf', bbox_inches=None,
+                  metadata={'Creator': 'Stylized Map Generator'})
+    if transparent:
+        kwargs['transparent'] = True
+    else:
+        kwargs['facecolor'] = PALETTE['paper']
+    fig.savefig(out, **kwargs)
     tick(f"✓  {name}.pdf  ({os.path.getsize(out)/1e6:.1f} MB, {time.time()-t0:.1f}s)")
     plt.close(fig)
 
@@ -183,10 +208,15 @@ def render_hillshade(bounds, force=False):
 
     tick(f"hillshade grid: {sv.shape[1]}×{sv.shape[0]} px, {len(levels_hs)-1} bands")
     fig, ax = _make_fig_ax(bounds)
+    # Opaque paper background so the alpha blends are baked into PDF colors.
+    # PDF Form XObject compositing doesn't reliably apply alpha against a parent
+    # page, so we render the hillshade as the base layer with solid background.
+    fig.patch.set(facecolor=PALETTE['paper'], alpha=1)
+    ax.patch.set(facecolor=PALETTE['paper'], alpha=1)
     ax.contourf(x_hs, y_hs, sv,
                 levels=levels_hs, cmap=cmap_shade,
                 alpha=HS_ALPHA, zorder=1, antialiased=False)
-    _save(fig, 'hillshade')
+    _save(fig, 'hillshade', transparent=False)
 
 
 # ─── Contours ────────────────────────────────────────────────────────────────
@@ -323,21 +353,19 @@ def render_waterways(bounds, force=False):
     from shapely.geometry import box
     ww = gpd.read_parquet(ww_path)
     clip_box = box(bounds['west'], bounds['south'], bounds['east'], bounds['north'])
-    ww = ww[ww.geometry.intersects(clip_box)]
+    ww = ww.copy()
+    ww['geometry'] = ww.geometry.intersection(clip_box)
+    ww = ww[~ww.geometry.is_empty]
 
-    is_river  = ww.get('waterway', '').isin(['river', 'canal']) \
+    is_river  = ww['waterway'].isin(['river', 'canal']) \
                 if 'waterway' in ww.columns else ww.index.isin([])
     major_ww  = ww[is_river]
     minor_ww  = ww[~is_river]
-    tick(f"plotting {len(major_ww):,} major + {len(minor_ww):,} minor waterways …")
+    tick(f"plotting {len(major_ww)} major + {len(minor_ww)} minor waterway types …")
 
     fig, ax = _make_fig_ax(bounds)
-    if len(major_ww):
-        major_ww.plot(ax=ax, color=PALETTE['water_line'],
-                      linewidth=lw('river_major'), zorder=4)
-    if len(minor_ww):
-        minor_ww.plot(ax=ax, color=PALETTE['water_line'],
-                      linewidth=lw('river_minor'), zorder=4, alpha=0.7)
+    _plot_lines(major_ww, ax, PALETTE['water_line'], lw('river_major'), zorder=4)
+    _plot_lines(minor_ww, ax, PALETTE['water_line'], lw('river_minor'), zorder=4, alpha=0.7)
     _save(fig, 'waterways')
 
 
@@ -370,7 +398,9 @@ def render_roads(bounds, force=False):
     from shapely.geometry import box
     roads = gpd.read_parquet(roads_path)
     clip_box = box(bounds['west'], bounds['south'], bounds['east'], bounds['north'])
-    roads = roads[roads.geometry.intersects(clip_box)]
+    roads = roads.copy()
+    roads['geometry'] = roads.geometry.intersection(clip_box)
+    roads = roads[~roads.geometry.is_empty]
 
     fig, ax = _make_fig_ax(bounds)
 
@@ -379,12 +409,10 @@ def render_roads(bounds, force=False):
             mask   = roads['highway'].astype(str).str.lower() == htype
             subset = roads[mask]
             if len(subset):
-                tick(f"plotting {len(subset):,} {htype} roads …")
-                subset.plot(ax=ax, color=PALETTE[color_key],
-                            linewidth=lw(lw_key), zorder=zord)
+                tick(f"plotting {htype} roads …")
+                _plot_lines(subset, ax, PALETTE[color_key], lw(lw_key), zorder=zord)
     else:
-        roads.plot(ax=ax, color=PALETTE['minor_road'],
-                   linewidth=lw('minor_road'), zorder=5)
+        _plot_lines(roads, ax, PALETTE['minor_road'], lw('minor_road'), zorder=5)
 
     tick(f"✓  {len(roads):,} roads total")
     _save(fig, 'roads')

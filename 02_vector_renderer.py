@@ -34,7 +34,6 @@ from config import (
     CONTOUR_SMOOTH,
     HS_AZIMUTH, HS_ALTITUDE, HS_VERT_EXAG,
     SIMPLIFY_TOLERANCE_DEG,
-    MIN_WATERWAY_LENGTH_DEG, MIN_ROAD_LENGTH_DEG,
     DEM_PATH, OSM_PATH, CACHE_DIR,
 )
 
@@ -158,23 +157,22 @@ def process_osm_layer(name, available, force=False):
                 SIMPLIFY_TOLERANCE_DEG, preserve_topology=True,
             )
 
-    # Drop sub-threshold minor features that are invisible at wall-map scale.
-    if name == 'waterways' and MIN_WATERWAY_LENGTH_DEG > 0 and 'waterway' in gdf.columns:
-        is_major = gdf['waterway'].isin(['river', 'canal'])
-        minor    = gdf[~is_major]
-        keep     = minor.geometry.length >= MIN_WATERWAY_LENGTH_DEG
-        gdf = gdf[is_major | (~is_major & keep)]
-        tick(f"waterways: {n_raw:,} → {len(gdf):,} after length filter (>= {MIN_WATERWAY_LENGTH_DEG}°)")
+    # Dissolve by type so the renderer receives one MultiLineString per category
+    # instead of hundreds of thousands of individual segments.  This eliminates
+    # the connectivity-breaking length-filter approach and keeps peak render
+    # memory proportional to road/waterway types (~7–15), not segment count.
+    if name == 'roads' and 'highway' in gdf.columns:
+        gdf['highway'] = gdf['highway'].astype(str).str.lower()
+        gdf = gdf[['highway', 'geometry']].dissolve(by='highway', as_index=False)
+        tick(f"roads: {n_raw:,} segments → {len(gdf)} dissolved types")
 
-    if name == 'roads' and MIN_ROAD_LENGTH_DEG > 0 and 'highway' in gdf.columns:
-        minor_types = {'residential', 'unclassified', 'tertiary'}
-        is_minor = gdf['highway'].astype(str).str.lower().isin(minor_types)
-        keep     = gdf.geometry.length >= MIN_ROAD_LENGTH_DEG
-        gdf = gdf[~is_minor | (is_minor & keep)]
-        tick(f"roads: {n_raw:,} → {len(gdf):,} after length filter (>= {MIN_ROAD_LENGTH_DEG}°)")
+    if name == 'waterways' and 'waterway' in gdf.columns:
+        gdf['waterway'] = gdf['waterway'].astype(str).str.lower()
+        gdf = gdf[['waterway', 'geometry']].dissolve(by='waterway', as_index=False)
+        tick(f"waterways: {n_raw:,} segments → {len(gdf)} dissolved types")
 
     gdf.to_parquet(out_path)
-    tick(f"{name}.parquet  ({len(gdf):,} features, {os.path.getsize(out_path)/1e6:.1f} MB)")
+    tick(f"{name}.parquet  ({len(gdf)} features, {os.path.getsize(out_path)/1e6:.1f} MB)")
 
 
 def process_osm(force=False):
