@@ -19,8 +19,8 @@ import numpy as np
 # match ~9:8 aspect on the print.
 
 BOUNDS = {
-    'west':  -98.3164,   # recentered on Stroud, OK (35.7489°N, 96.6567°W)
-    'east':  -94.9970,
+    'west':  -98.3905,   # expanded ±0.074° lon to match 115" × 98" aspect ratio
+    'east':  -94.9229,
     'south':  34.5489,
     'north':  36.9489,
 }
@@ -29,8 +29,8 @@ BOUNDS = {
 LAT_CENTER = (BOUNDS['north'] + BOUNDS['south']) / 2   # ≈ 35.8 °N
 
 # ─── WALL / OUTPUT DIMENSIONS ───────────────────────────────────────────────
-WALL_WIDTH_FEET  = 9 + 2/12      # 9' 2"
-WALL_HEIGHT_FEET = 8 + 2/12      # 8' 2"
+WALL_WIDTH_FEET  = 9 + 7/12      # 9' 7"  (115")
+WALL_HEIGHT_FEET = 8 + 2/12      # 8' 2"  (98")
 
 # ── PREVIEW vs. PRINT ──────────────────────────────────────────────────────
 # PREVIEW = True  → fast, screen-resolution render (good for style iteration)
@@ -129,7 +129,7 @@ TILE_MAX_WORKERS = 1      # parallel render processes — watch RAM (~2.5 GB eac
 # Minimum area to render as a water body polygon.  Drops micro-features (puddles,
 # drainage pits) that inflate render time without contributing to the map.
 # 1 ha ≈ 2.5 acres (farm pond threshold); 0.1 ha ≈ 0.25 acres (keep most ponds).
-WATER_BODY_MIN_AREA_HA = 0.1
+WATER_BODY_MIN_AREA_HA = 0.5   # ~1.25 acres; tune up to reduce pond clutter, down to add detail
 
 # ─── LINEAR FEATURE LENGTH FILTERS ─────────────────────────────────────────────
 # Minimum segment length (decimal degrees) for minor linear features.

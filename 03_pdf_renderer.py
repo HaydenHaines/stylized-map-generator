@@ -322,10 +322,9 @@ def render_water_bodies(bounds, force=False):
     clip_box = box(bounds['west'], bounds['south'], bounds['east'], bounds['north'])
     wb = wb[wb.geometry.intersects(clip_box)]
 
-    cos_lat = np.cos(np.radians(LAT_CENTER))
-    min_area = WATER_BODY_MIN_AREA_HA / (111 * 111 * cos_lat * 100)
-    wb = wb[wb.area > min_area]
-    tick(f"plotting {len(wb):,} water bodies …")
+    min_area_m2 = WATER_BODY_MIN_AREA_HA * 10_000
+    wb = wb[wb.to_crs('EPSG:5070').area > min_area_m2]
+    tick(f"plotting {len(wb):,} water bodies (>= {WATER_BODY_MIN_AREA_HA} ha) …")
 
     fig, ax = _make_fig_ax(bounds)
     if len(wb):

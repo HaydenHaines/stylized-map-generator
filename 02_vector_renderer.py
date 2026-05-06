@@ -168,8 +168,38 @@ def process_osm_layer(name, available, force=False):
 
     if name == 'waterways' and 'waterway' in gdf.columns:
         gdf['waterway'] = gdf['waterway'].astype(str).str.lower()
+        # Apply type-specific simplification: minor features (drains, ditches) are
+        # often rectilinear ag channels with redundant collinear points — a looser
+        # tolerance cuts path complexity substantially without visual impact at wall scale.
+        WATERWAY_SIMPLIFY = {
+            'river':   5e-5,   # ~5.5 m — preserve meander detail
+            'canal':   5e-5,
+            'stream':  2e-4,   # ~22 m — still very fine
+            'creek':   2e-4,
+            'drain':   5e-4,   # ~55 m — straight ag channels
+            'ditch':   5e-4,
+        }
+        DEFAULT_WW_SIMPLIFY = 2e-4
+        def _simplify_row(row):
+            tol = WATERWAY_SIMPLIFY.get(row['waterway'], DEFAULT_WW_SIMPLIFY)
+            return row.geometry.simplify(tol, preserve_topology=True)
+        gdf.geometry = gdf.apply(_simplify_row, axis=1)
         gdf = gdf[['waterway', 'geometry']].dissolve(by='waterway', as_index=False)
         tick(f"waterways: {n_raw:,} segments → {len(gdf)} dissolved types")
+
+    if name == 'railways':
+        # Drop short segments (yard sidings, spurs) before dissolving.
+        # Mainline segments between OSM junctions are typically several km;
+        # yard/siding tracks are short and create solid-black patches at wall scale.
+        # 0.005° ≈ 550 m at this latitude.
+        MIN_RAIL_DEG = 0.005
+        n_before = len(gdf)
+        gdf = gdf[gdf.geometry.length >= MIN_RAIL_DEG].copy()
+        tick(f"railways: {n_before:,} segments → {len(gdf)} after dropping < {MIN_RAIL_DEG}°")
+        if 'railway' in gdf.columns:
+            gdf['railway'] = gdf['railway'].astype(str).str.lower()
+            gdf = gdf[['railway', 'geometry']].dissolve(by='railway', as_index=False)
+            tick(f"railways: dissolved to {len(gdf)} types")
 
     gdf.to_parquet(out_path)
     tick(f"{name}.parquet  ({len(gdf)} features, {os.path.getsize(out_path)/1e6:.1f} MB)")
