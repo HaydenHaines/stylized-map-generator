@@ -18,3 +18,7 @@ env/
 # OS
 .DS_Store
 Thumbs.db
+
+# Claude Code / browser-automation local artifacts
+.claude/
+.playwright-mcp/
